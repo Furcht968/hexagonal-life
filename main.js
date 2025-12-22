@@ -28,8 +28,9 @@ const CONSTANTS = {
 
 // === Rule Definitions ===
 const RULESETS = {
+    b245s25: { birth: [2, 4, 5], survival: [2, 5], name: 'B245/S25' },
     b2s34: { birth: [2], survival: [3, 4], name: 'B2/S34' },
-    b245s25: { birth: [2, 4, 5], survival: [2, 5], name: 'B245/S25' }
+    b2s23: { birth: [2], survival: [2, 3], name: 'B2/S23' }
 };
 
 // === State Management ===
