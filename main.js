@@ -262,24 +262,11 @@ function initGame(cellCountX = state.config.cellX, cellCountY = state.config.cel
 
     updateTheme();
 
-    // Default behavior: always preserve existing cells unless an explicit action is provided
-    const finalAction = action ?? 'preserve';
-
-    if (finalAction === 'clear') {
-        state.game.clear();
-    } else if (finalAction === 'randomize') {
-        // ランダマイズ
-        state.game.fillRandom(state.config.density);
-    } else if (finalAction === 'preserve' && prevCells) {
-        // セルを保持する場合、既存のセル配列から新しいサイズへコピー
-        for (let x = 0; x < Math.min(layout.cellX, prevCellX); x++) {
-            for (let y = 0; y < Math.min(layout.cellY, prevCellY); y++) {
-                state.game.cell[x][y] = prevCells[x][y];
-            }
+    // セルを保持する場合、既存のセル配列から新しいサイズへコピー
+    for (let x = 0; x < Math.min(layout.cellX, prevCellX); x++) {
+        for (let y = 0; y < Math.min(layout.cellY, prevCellY); y++) {
+            state.game.cell[x][y] = prevCells[x][y];
         }
-    } else {
-        // デフォルト: ランダマイズ（prevCells が無い場合）
-        state.game.fillRandom(state.config.density);
     }
 
     setFPS(state.config.fps);
@@ -368,10 +355,10 @@ function pixelToCell(px, py) {
     const csx = state.game.cellSizeX;
     const csy = state.game.cellSizeY;
     let y = Math.round((ty - csy * CONSTANTS.HEX_HALF_HEIGHT) / (csy * CONSTANTS.HEX_VERTICAL_SPACING));
-    y = Math.max(0, Math.min(y, state.game.cellY - 1));
+    //y = Math.max(0, Math.min(y, state.game.cellY - 1));
     const offsetX = (y % 2) * (csx / 2);
     let x = Math.round((tx - offsetX - csx / 2) / csx);
-    x = Math.max(0, Math.min(x, state.game.cellX - 1));
+    //x = Math.max(0, Math.min(x, state.game.cellX - 1));
     return { x, y };
 }
 
@@ -381,6 +368,7 @@ function handlePointerSet(e) {
     const rect = state.canvas.getBoundingClientRect();
     const c = pixelToCell(e.clientX - rect.left, e.clientY - rect.top);
     if (!c) return;
+    if (c.x < 0 || c.x >= state.game.cellX || c.y < 0 || c.y >= state.game.cellY) return;
     state.pointerDrawValue = state.game.cell[c.x][c.y] ? 0 : 1;
     state.game.cell[c.x][c.y] = state.pointerDrawValue;
     state.game.render();
@@ -600,6 +588,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const rect = state.canvas.getBoundingClientRect();
         const c = pixelToCell(e.clientX - rect.left, e.clientY - rect.top);
         if (!c) return;
+        if (c.x < 0 || c.x >= state.game.cellX || c.y < 0 || c.y >= state.game.cellY) return;
         if (state.game.cell[c.x][c.y] !== state.pointerDrawValue) {
             state.game.cell[c.x][c.y] = state.pointerDrawValue;
             state.game.render();
