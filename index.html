@@ -29,7 +29,8 @@
         </button>
         <div id="controls" class="controls" aria-hidden="false">
             <label><input type="checkbox" id="darkToggle"> Dark mode</label>
-            <label>Cell size: <input type="range" id="sizeRange" min="8" max="120" value="50"></label>
+            <label>Cells X: <input type="range" id="cellXRange" min="4" max="200" value="32"></label>
+            <label>Cells Y: <input type="range" id="cellYRange" min="4" max="200" value="20"></label>
             <label>Density: <input type="range" id="densityRange" min="0" max="0.5" step="0.01" value="0.10"></label>
             <label>FPS: <input type="range" id="fpsRange" min="1" max="60" value="10"></label>
             <label>Rule:
@@ -37,15 +38,11 @@
                     <option value="b245s25">B245/S25</option>
                     <option value="b2s34">B2/S34</option>
                     <option value="b2s23">B2/S23</option>
+                    <option value="other">Other (custom)</option>
                 </select>
             </label>
-            <label>On setting change:
-                <select id="onSettingChange">
-                    <option value="preserve">Keep cells</option>
-                    <option value="clear">Clear</option>
-                    <option value="randomize">Randomize</option>
-                </select>
-            </label>
+            <label id="customRuleLabel" style="display:none">Custom rule: <input type="text" id="customRuleInput" placeholder="B245/S25 or B2/S34"></label>
+            <!-- 'On setting change' removed — always preserve cells on setting changes -->
             <div>
                 the source code is in <a href="https://github.com/Furcht968/hexagonal-life">here</a>.
             </div>
