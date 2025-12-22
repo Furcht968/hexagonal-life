@@ -262,6 +262,8 @@ function initGame(cellCountX = state.config.cellX, cellCountY = state.config.cel
 
     updateTheme();
 
+    state.game.fillRandom(state.config.density);
+    
     // セルを保持する場合、既存のセル配列から新しいサイズへコピー
     for (let x = 0; x < Math.min(layout.cellX, prevCellX); x++) {
         for (let y = 0; y < Math.min(layout.cellY, prevCellY); y++) {
