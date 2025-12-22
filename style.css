@@ -23,7 +23,7 @@ canvas {
     top: 0;
     height: 100%;
     width: 280px;
-    z-index: 80;
+    z-index: 100; /* bring menu above top buttons */
     background: rgba(255,255,255,0.98);
     color: #111;
     padding: 16px;
@@ -53,7 +53,7 @@ body.dark .canvas { background: #111; }
     position: fixed;
     right: 12px;
     top: 12px;
-    z-index: 90;
+    z-index: 80; /* keep hamburger above the menu */
     background: rgba(255,255,255,0.95);
     border: none;
     padding: 8px 10px;
@@ -70,7 +70,7 @@ body.dark .controls-toggle { background: rgba(30,30,30,0.95); color: #fff; }
     display: block;
     position: fixed;
     top: 12px;
-    z-index: 90;
+    z-index: 90; /* below menu */
     background: rgba(255,255,255,0.95);
     border: none;
     padding: 8px 10px;
@@ -106,8 +106,9 @@ body.controls-faded .top-btn {
     transition: opacity 300ms ease;
 }
 
-/* controls-visible のときはトグルを隠す（重なりを避ける） */
-body.controls-visible .controls-toggle { display: none; }
+/* controls-visible のときもハンバーガーは表示し続ける */
+/* (we keep the toggle on top so users can always close the menu) */
+/* no display:none rule here */
 
 /* ホバーで復活 */
 .controls:hover { opacity: 1 !important; pointer-events: auto !important; }

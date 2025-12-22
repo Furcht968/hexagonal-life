@@ -184,11 +184,19 @@ function initGame(cellPixelSize = CONSTANTS.DEFAULT_CELL_PIXEL, action = null) {
     const prevCellX = state.game ? state.game.cellX : null;
     const prevCellY = state.game ? state.game.cellY : null;
 
-    state.canvas.width = layout.width;
-    state.canvas.height = layout.height;
+    // Handle high-DPI / devicePixelRatio so canvas looks sharp on mobile
+    const dpr = window.devicePixelRatio || 1;
+    state.canvas.style.width = layout.width + 'px';
+    state.canvas.style.height = layout.height + 'px';
+    state.canvas.width = Math.max(1, Math.floor(layout.width * dpr));
+    state.canvas.height = Math.max(1, Math.floor(layout.height * dpr));
+    // Reset transform and scale so drawing uses CSS pixels coordinates
+    state.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Disable smoothing for crisper vector edges if any bitmap smoothing occurs
+    try { state.ctx.imageSmoothingEnabled = false; } catch (e) {}
 
-    // 新しいゲームインスタンスを作成
-    state.game = new GameOfLife(state.ctx, state.canvas.width, state.canvas.height, layout.cellX, layout.cellY);
+    // 新しいゲームインスタンスを作成（幅/高さはCSSピクセル単位で渡す）
+    state.game = new GameOfLife(state.ctx, layout.width, layout.height, layout.cellX, layout.cellY);
     state.game.cellSizeX = layout.cellSizeX;
     state.game.cellSizeY = layout.cellSizeY;
 
@@ -401,8 +409,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // === Menu Toggle ===
+    // Restore controls visibility only if explicitly remembered.
+    // Default to closed to avoid unexpected auto-open on load.
     const stored = localStorage.getItem('controlsVisible');
-    updateControlsVisibility(stored === '1');
+    updateControlsVisibility(false);
 
     controls.controlsToggle.addEventListener('click', (e) => {
         e.stopPropagation();
