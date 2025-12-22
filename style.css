@@ -1,4 +1,4 @@
-/* 画面全体に布がる */
+/* 画面全体に広がる */
 html, body {
     width: 100%;
     height: 100%;
@@ -7,7 +7,7 @@ html, body {
     overflow: hidden;
 }
 
-/* canvasを画面全体に布く */
+/* canvasを画面全体に敷く */
 canvas {
     display: block;
     margin: 0;

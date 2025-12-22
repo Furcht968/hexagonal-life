@@ -1,5 +1,5 @@
 {
-    "name": "hexagonal-game-of-life",
+    "name": "hexagonal-life",
     "compatibility_date": "2025-12-22",
     "assets": {
         "directory": "./"
