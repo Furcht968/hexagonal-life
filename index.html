@@ -7,7 +7,8 @@
     <title>Hexagonal Game of Life</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="style.css" />
     <link rel="stylesheet" href="fa.css" />
 </head>
@@ -52,7 +53,7 @@
 
         <div class="control-group">
             <label class="toggle-container">
-                <span class="toggle-label">ダークモード (Dark Mode)</span>
+                <span class="toggle-label">Dark Mode</span>
                 <input type="checkbox" id="darkToggle">
                 <span class="toggle-switch"></span>
             </label>
@@ -60,7 +61,7 @@
 
         <div class="control-group">
             <div class="control-header-row">
-                <span>グリッド幅 (Cells X)</span>
+                <span>Cells X</span>
                 <span id="cellXValue" class="value-badge">32</span>
             </div>
             <input type="range" id="cellXRange" min="4" max="200" value="32">
@@ -68,7 +69,7 @@
 
         <div class="control-group">
             <div class="control-header-row">
-                <span>グリッド高 (Cells Y)</span>
+                <span>Cells Y</span>
                 <span id="cellYValue" class="value-badge">20</span>
             </div>
             <input type="range" id="cellYRange" min="4" max="200" value="20">
@@ -76,7 +77,7 @@
 
         <div class="control-group">
             <div class="control-header-row">
-                <span>初期密度 (Density)</span>
+                <span>Density</span>
                 <span id="densityValue" class="value-badge">10%</span>
             </div>
             <input type="range" id="densityRange" min="0" max="0.5" step="0.01" value="0.10">
@@ -84,25 +85,25 @@
 
         <div class="control-group">
             <div class="control-header-row">
-                <span>速度 (FPS)</span>
+                <span>FPS</span>
                 <span id="fpsValue" class="value-badge">10</span>
             </div>
             <input type="range" id="fpsRange" min="1" max="60" value="10">
         </div>
 
         <div class="control-group">
-            <label class="select-label">ルール定義 (Rule Sets)</label>
+            <label class="select-label">Rule</label>
             <select id="ruleSelect">
-                <option value="b245s25">B245/S25 (標準六角)</option>
-                <option value="b2s34">B2/S34 (ライフ的)</option>
-                <option value="b2s23">B2/S23 (増殖的)</option>
-                <option value="other">カスタムルール (Custom)</option>
+                <option value="b245s25">B245/S25</option>
+                <option value="b2s34">B2/S34</option>
+                <option value="b2s23">B2/S23</option>
+                <option value="other">Custom Rule</option>
             </select>
         </div>
 
         <div id="customRuleLabel" style="display:none" class="control-group">
             <label class="custom-rule-row">
-                カスタムルール入力:
+                Custom Rule:
                 <span id="ruleTypeBadge" class="rule-badge" style="display:none"></span>
                 <input type="text" id="customRuleInput" placeholder="例: B2om3p/S1234-o" autocomplete="off"
                     spellcheck="false">
