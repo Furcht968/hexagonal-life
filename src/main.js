@@ -28,26 +28,197 @@ const CONSTANTS = {
 
 // === Rule Definitions ===
 const RULESETS = {
-    b245s25: { birth: [2, 4, 5], survival: [2, 5], name: 'B245/S25' },
-    b2s34: { birth: [2], survival: [3, 4], name: 'B2/S34' },
-    b2s23: { birth: [2], survival: [2, 3], name: 'B2/S23' }
+    b245s25: { birth: [2, 4, 5], survival: [2, 5], name: 'B245/S25', type: 'totalistic' },
+    b2s34: { birth: [2], survival: [3, 4], name: 'B2/S34', type: 'totalistic' },
+    b2s23: { birth: [2], survival: [2, 3], name: 'B2/S23', type: 'totalistic' }
 };
 
-// Parse custom rule strings like "B245/S25" -> { birth: [2,4,5], survival: [2,5] }
-function parseRuleString(str) {
+// ============================================
+// Hexagonal INT (Isotropic Non-Totalistic) Rule Engine
+// Callahan notation for hexagonal grids
+// ============================================
+//
+// Each cell has 6 neighbors. With rotational+reflective symmetry (D6),
+// neighbor counts 0,1,5,6 have only 1 isotropic class each (no letter needed).
+// Counts 2,3,4 each have 3 isotropic classes:
+//   o (ortho)  = neighbors are adjacent to each other
+//   m (meta)   = neighbors are separated by 1 gap
+//   p (para)   = neighbors are separated by 2 gaps (for 2: directly opposite)
+//
+// Neighbor bits 0..5 are assigned clockwise:
+//   0=top-right, 1=right, 2=bottom-right, 3=bottom-left, 4=left, 5=top-left
+// (actual deltas depend on row parity, but the cyclic order is consistent)
+//
+// Class definitions for each count:
+//   Count 2:
+//     o = bits are adjacent (diff=1): {0,1},{1,2},{2,3},{3,4},{4,5},{5,0}
+//     m = bits are separated by 1 (diff=2): {0,2},{1,3},{2,4},{3,5},{4,0},{5,1}
+//     p = bits are opposite (diff=3): {0,3},{1,4},{2,5}
+//   Count 3:
+//     o = three consecutive bits: {0,1,2},{1,2,3},...
+//     m = one pair adjacent + one separated: gaps sorted = [1,2,3]
+//     p = alternating: {0,2,4},{1,3,5} -- gaps all equal 2
+//   Count 4: complement of count-2 (4 alive = 2 dead, classify dead bits)
+//     o = complement of 2-o
+//     m = complement of 2-m
+//     p = complement of 2-p
+//
+// Rule string format (Callahan/Hensel style):
+//   B<birth-spec>/S<survival-spec>
+//   where each spec is zero or more "groups":
+//     digit alone (0,1,5,6): that count is entirely included
+//     digit + letters (2o, 3mp, 4-o): sub-class selection
+//       - no minus: include only the listed letters
+//       - with minus: include all EXCEPT the listed letters
+//   Example: B2o3p/S1234-o5
+// ============================================
+
+// Precompute: for each 6-bit mask (0..63), determine its isotropic class
+// Returns a string like "0", "1", "2o", "2m", "2p", "3o", "3m", "3p",
+// "4o", "4m", "4p", "5", "6"
+function computeHexClass(mask) {
+    // Count bits
+    let count = 0;
+    const bits = [];
+    for (let i = 0; i < 6; i++) {
+        if (mask & (1 << i)) { count++; bits.push(i); }
+    }
+    if (count === 0) return '0';
+    if (count === 1) return '1';
+    if (count === 5) return '5';
+    if (count === 6) return '6';
+
+    if (count === 2) {
+        const [a, b] = bits;
+        const diff = (b - a + 6) % 6;
+        if (diff === 1 || diff === 5) return '2o'; // adjacent
+        if (diff === 2 || diff === 4) return '2m'; // meta
+        if (diff === 3) return '2p'; // para (opposite)
+    }
+
+    if (count === 4) {
+        // Use complement: 4 alive = 2 dead; classify the 2 dead bits
+        const deadBits = [];
+        for (let i = 0; i < 6; i++) {
+            if (!(mask & (1 << i))) deadBits.push(i);
+        }
+        const [a, b] = deadBits;
+        const diff = (b - a + 6) % 6;
+        if (diff === 1 || diff === 5) return '4o';
+        if (diff === 2 || diff === 4) return '4m';
+        if (diff === 3) return '4p';
+    }
+
+    if (count === 3) {
+        const [a, b, c] = bits; // already sorted ascending
+        // Compute cyclic gaps between consecutive bits
+        const d1 = (b - a + 6) % 6;
+        const d2 = (c - b + 6) % 6;
+        const d3 = (a - c + 6) % 6; // wrap-around gap
+        const gaps = [d1, d2, d3].sort((x, y) => x - y);
+        // Alternating: all gaps == 2 -> [2,2,2]
+        if (gaps[0] === 2 && gaps[1] === 2 && gaps[2] === 2) return '3p';
+        // Consecutive: two gaps of 1, one of 4 -> sorted [1,1,4]
+        if (gaps[0] === 1 && gaps[1] === 1) return '3o';
+        // Otherwise meta: gaps sorted [1,2,3]
+        return '3m';
+    }
+
+    return String(count); // fallback
+}
+
+// Build lookup table: mask (0..63) -> class string
+const HEX_CLASS = new Array(64);
+for (let m = 0; m < 64; m++) {
+    HEX_CLASS[m] = computeHexClass(m);
+}
+
+// Parse an INT neighbor-count spec string like "2om3-o5" into a Set of class strings.
+// Each group in the spec is: digit optionally followed by modifier.
+// Modifier: letters omp (include those) OR -letters (exclude those).
+// Returns Set<string> of allowed class names (e.g. "2o","3m","5").
+function parseINTSpec(spec) {
+    const allowed = new Set();
+    if (!spec) return allowed;
+    // Tokenize: find each digit followed by optional (-?[omp]*)
+    const re = /([0-6])(-[omp]+|[omp]*)/g;
+    let match;
+    while ((match = re.exec(spec)) !== null) {
+        const n = match[1];
+        const mod = match[2] || '';
+        if (n === '0' || n === '1' || n === '5' || n === '6') {
+            // Single class - no sub-types
+            allowed.add(n);
+        } else {
+            // n is 2, 3, or 4 — has sub-classes o, m, p
+            const allSubs = ['o', 'm', 'p'];
+            if (mod === '') {
+                // No modifier: include all sub-classes
+                allSubs.forEach(s => allowed.add(n + s));
+            } else if (mod.startsWith('-')) {
+                // Exclude listed letters
+                const excluded = mod.slice(1).split('');
+                allSubs.forEach(s => {
+                    if (!excluded.includes(s)) allowed.add(n + s);
+                });
+            } else {
+                // Include only listed letters
+                mod.split('').forEach(s => {
+                    if (allSubs.includes(s)) allowed.add(n + s);
+                });
+            }
+        }
+    }
+    return allowed;
+}
+
+// Parse an INT rule string like "B2om3p/S2om3-o5"
+// Returns { birth: Set, survival: Set, type: 'int', name: str } or null
+function parseINTRule(str) {
+    if (!str || typeof str !== 'string') return null;
+    const s = str.trim();
+    // Must contain at least one INT letter (o, m, or p) to qualify as INT rule
+    if (!/[omp]/i.test(s)) return null;
+    // Match B<spec>/S<spec> or B<spec>S<spec>
+    const m = s.match(/^[Bb]([0-6omp-]*)\/?[Ss]([0-6omp-]*)$/i);
+    if (!m) return null;
+    const birth = parseINTSpec(m[1].toLowerCase());
+    const survival = parseINTSpec(m[2].toLowerCase());
+    return { birth, survival, type: 'int', name: str };
+}
+
+// Parse totalistic rule strings like "B245/S25" -> { birth: [2,4,5], survival: [2,5] }
+function parseTotalisticRule(str) {
     if (!str || typeof str !== 'string') return null;
     const s = str.toUpperCase().replace(/\s+/g, '');
-    const m = s.match(/^B([0-9,]+)\/S([0-9,]+)$/);
+    const m = s.match(/^B([0-9,]*)\/?S([0-9,]*)$/);
     if (!m) return null;
     const birth = (m[1] || '').split(',').join('').split('').filter(Boolean).map(n => parseInt(n, 10)).filter(n => !Number.isNaN(n));
     const survival = (m[2] || '').split(',').join('').split('').filter(Boolean).map(n => parseInt(n, 10)).filter(n => !Number.isNaN(n));
-    return { birth, survival, name: str };
+    return { birth, survival, type: 'totalistic', name: str };
+}
+
+// Auto-detect and parse rule string (INT or totalistic)
+function parseRuleString(str) {
+    const intRule = parseINTRule(str);
+    if (intRule) return intRule;
+    return parseTotalisticRule(str);
 }
 
 function getActiveRule() {
-    if (state.config.rule && state.config.rule !== 'other') return RULESETS[state.config.rule] || RULESETS.b245s25;
+    if (state.config.rule && state.config.rule !== 'other') {
+        return RULESETS[state.config.rule] || RULESETS.b245s25;
+    }
     const parsed = parseRuleString(state.config.customRule || '');
     return parsed || RULESETS.b245s25;
+}
+
+// Validate a rule string — returns error message string or null if valid
+function validateRuleString(str) {
+    if (!str || !str.trim()) return null; // empty is ok (will use default)
+    const r = parseRuleString(str.trim());
+    if (!r) return '無効な形式。例: B2om3p/S1234-o (INT) または B245/S25 (合計)';
+    return null;
 }
 
 // === State Management ===
@@ -104,26 +275,78 @@ class GameOfLife {
         this.colors = { fill: '#000', stroke: '#ccc', bg: '#fff' };
     }
 
-    countNeighbors(x, y) {
-        let count = 0;
-        const diagDx = (y % 2 === 0 ? -1 : 1);
-        const neighbors = [[1, 0], [-1, 0], [0, 1], [0, -1], [diagDx, 1], [diagDx, -1]];
-        for (const [dx, dy] of neighbors) {
-            count += this.cell[(x + dx + this.cellX) % this.cellX][(y + dy + this.cellY) % this.cellY];
+    // Returns 6-bit bitmask of neighbor states.
+    // Bits 0..5 are assigned to the 6 neighbors in clockwise order,
+    // using a consistent labeling for even and odd rows so that
+    // the cyclic symmetry is correctly captured.
+    //
+    // For even rows (y%2 == 0, offset cells shifted left relative to odd):
+    //   Even-row neighbor deltas (dx, dy) in clockwise order:
+    //     0: ( 0,-1) top-right
+    //     1: ( 1, 0) right
+    //     2: ( 0, 1) bottom-right
+    //     3: (-1, 1) bottom-left
+    //     4: (-1, 0) left
+    //     5: (-1,-1) top-left
+    // For odd rows (y%2 == 1):
+    //     0: ( 1,-1) top-right
+    //     1: ( 1, 0) right
+    //     2: ( 1, 1) bottom-right
+    //     3: ( 0, 1) bottom-left
+    //     4: (-1, 0) left
+    //     5: ( 0,-1) top-left
+    getNeighborMask(x, y) {
+        const cx = this.cellX;
+        const cy = this.cellY;
+        let ns;
+        if (y % 2 === 0) {
+            ns = [[0, -1], [1, 0], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
+        } else {
+            ns = [[1, -1], [1, 0], [1, 1], [0, 1], [-1, 0], [0, -1]];
         }
+        let mask = 0;
+        for (let i = 0; i < 6; i++) {
+            const nx = (x + ns[i][0] + cx) % cx;
+            const ny = (y + ns[i][1] + cy) % cy;
+            if (this.cell[nx][ny]) mask |= (1 << i);
+        }
+        return mask;
+    }
+
+    countNeighbors(x, y) {
+        const mask = this.getNeighborMask(x, y);
+        let count = 0;
+        for (let i = 0; i < 6; i++) if (mask & (1 << i)) count++;
         return count;
     }
 
     nextGeneration() {
         const rule = getActiveRule();
         const next = Array.from({ length: this.cellX }, () => Array(this.cellY).fill(0));
-        for (let x = 0; x < this.cellX; x++) {
-            for (let y = 0; y < this.cellY; y++) {
-                const neighbors = this.countNeighbors(x, y);
-                if (this.cell[x][y] === 1) {
-                    next[x][y] = rule.survival.includes(neighbors) ? 1 : 0;
-                } else {
-                    next[x][y] = rule.birth.includes(neighbors) ? 1 : 0;
+
+        if (rule.type === 'int') {
+            // INT rule: use bitmask + isotropic class lookup
+            for (let x = 0; x < this.cellX; x++) {
+                for (let y = 0; y < this.cellY; y++) {
+                    const mask = this.getNeighborMask(x, y);
+                    const cls = HEX_CLASS[mask];
+                    if (this.cell[x][y] === 1) {
+                        next[x][y] = rule.survival.has(cls) ? 1 : 0;
+                    } else {
+                        next[x][y] = rule.birth.has(cls) ? 1 : 0;
+                    }
+                }
+            }
+        } else {
+            // Totalistic rule: count neighbors only
+            for (let x = 0; x < this.cellX; x++) {
+                for (let y = 0; y < this.cellY; y++) {
+                    const neighbors = this.countNeighbors(x, y);
+                    if (this.cell[x][y] === 1) {
+                        next[x][y] = rule.survival.includes(neighbors) ? 1 : 0;
+                    } else {
+                        next[x][y] = rule.birth.includes(neighbors) ? 1 : 0;
+                    }
                 }
             }
         }
@@ -217,7 +440,7 @@ function initGame(cellCountX = state.config.cellX, cellCountY = state.config.cel
     }
 
     const layout = computeLayout(cellCountX, cellCountY);
-    
+
     // 既存のセル配列を保存（preserve 時に使用）
     const prevCells = state.game ? state.game.cell : null;
     const prevCellX = state.game ? state.game.cellX : null;
@@ -232,7 +455,7 @@ function initGame(cellCountX = state.config.cellX, cellCountY = state.config.cel
     // Reset transform and scale so drawing uses CSS pixels coordinates
     state.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // Disable smoothing for crisper vector edges if any bitmap smoothing occurs
-    try { state.ctx.imageSmoothingEnabled = false; } catch (e) {}
+    try { state.ctx.imageSmoothingEnabled = false; } catch (e) { }
 
     // 新しいゲームインスタンスを作成（幅/高さはCSSピクセル単位で渡す）
     state.game = new GameOfLife(state.ctx, layout.width, layout.height, layout.cellX, layout.cellY);
@@ -310,10 +533,10 @@ function updatePauseButton() {
     if (!pauseBtn) return;
     if (state.paused) {
         pauseBtn.innerHTML = '<i class="fa fa-play" aria-hidden="true"></i><span class="sr-only">Resume</span>';
-        pauseBtn.setAttribute('aria-pressed', 'true');
+        pauseBtn.setAttribute('aria-pressed', 'false');
     } else {
         pauseBtn.innerHTML = '<i class="fa fa-pause" aria-hidden="true"></i><span class="sr-only">Pause</span>';
-        pauseBtn.setAttribute('aria-pressed', 'false');
+        pauseBtn.setAttribute('aria-pressed', 'true');
     }
 }
 
@@ -337,7 +560,6 @@ function showFadeTemporary() {
 
 function updateControlsVisibility(visible) {
     const controlsToggle = document.getElementById('controlsToggle');
-    const controlsEl = document.getElementById('controls');
     if (visible) {
         document.body.classList.add('controls-visible');
         controlsToggle?.setAttribute('aria-expanded', 'true');
@@ -345,7 +567,45 @@ function updateControlsVisibility(visible) {
         document.body.classList.remove('controls-visible');
         controlsToggle?.setAttribute('aria-expanded', 'false');
     }
-    try { localStorage.setItem('controlsVisible', visible ? '1' : '0'); } catch(e) {}
+    try { localStorage.setItem('controlsVisible', visible ? '1' : '0'); } catch (e) { }
+}
+
+// Update the custom rule input UI: show/hide rule-type hints, badge, and error
+function updateCustomRuleUI() {
+    const input = document.getElementById('customRuleInput');
+    const intHint = document.getElementById('intRuleHint');
+    const totHint = document.getElementById('totRuleHint');
+    const err = document.getElementById('ruleError');
+    const badge = document.getElementById('ruleTypeBadge');
+    if (!input) return;
+
+    const val = input.value.trim();
+    const errorMsg = validateRuleString(val);
+
+    // Error display
+    if (err) {
+        err.textContent = errorMsg || '';
+        err.style.display = errorMsg ? '' : 'none';
+    }
+
+    // Show correct hint panel and badge
+    if (val && !errorMsg) {
+        const parsed = parseRuleString(val);
+        if (parsed) {
+            const isINT = parsed.type === 'int';
+            if (intHint) intHint.style.display = isINT ? '' : 'none';
+            if (totHint) totHint.style.display = isINT ? 'none' : '';
+            if (badge) {
+                badge.textContent = isINT ? 'INT' : 'Totalistic';
+                badge.className = 'rule-badge ' + (isINT ? 'badge-int' : 'badge-tot');
+                badge.style.display = '';
+            }
+        }
+    } else {
+        if (intHint) intHint.style.display = 'none';
+        if (totHint) totHint.style.display = 'none';
+        if (badge) badge.style.display = 'none';
+    }
 }
 
 // ============================================
@@ -360,10 +620,8 @@ function pixelToCell(px, py) {
     const csx = state.game.cellSizeX;
     const csy = state.game.cellSizeY;
     let y = Math.round((ty - csy * CONSTANTS.HEX_HALF_HEIGHT) / (csy * CONSTANTS.HEX_VERTICAL_SPACING));
-    //y = Math.max(0, Math.min(y, state.game.cellY - 1));
     const offsetX = (y % 2) * (csx / 2);
     let x = Math.round((tx - offsetX - csx / 2) / csx);
-    //x = Math.max(0, Math.min(x, state.game.cellX - 1));
     return { x, y };
 }
 
@@ -409,7 +667,33 @@ document.addEventListener('DOMContentLoaded', () => {
     controls.fpsRange.value = state.config.fps;
     controls.ruleSelect.value = state.config.rule;
     if (controls.customRuleInput) controls.customRuleInput.value = state.config.customRule || '';
-    if (controls.customRuleLabel) controls.customRuleLabel.style.display = (state.config.rule === 'other' ? '' : 'none');
+    if (controls.customRuleLabel) {
+        controls.customRuleLabel.style.display = (state.config.rule === 'other' ? '' : 'none');
+    }
+
+    // Value display badges
+    const badges = {
+        cellX: document.getElementById('cellXValue'),
+        cellY: document.getElementById('cellYValue'),
+        density: document.getElementById('densityValue'),
+        fps: document.getElementById('fpsValue')
+    };
+
+    const updateBadges = () => {
+        if (badges.cellX) badges.cellX.textContent = state.config.cellX;
+        if (badges.cellY) badges.cellY.textContent = state.config.cellY;
+        if (badges.density) badges.density.textContent = Math.round(state.config.density * 100) + '%';
+        if (badges.fps) badges.fps.textContent = state.config.fps;
+    };
+    updateBadges();
+
+    // === Restore controls panel width ===
+    try {
+        const savedWidth = localStorage.getItem('controlsWidth');
+        if (savedWidth && controls.controlsEl) {
+            controls.controlsEl.style.width = savedWidth;
+        }
+    } catch (err) {}
 
     // === Theme Toggle ===
     controls.darkToggle.addEventListener('change', (e) => {
@@ -418,37 +702,109 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // === Grid Size Change (cells X/Y) ===
-    if (controls.cellXRange) controls.cellXRange.addEventListener('change', (e) => {
-        state.config.cellX = Math.max(1, Number(e.target.value));
-        initGame(state.config.cellX, state.config.cellY);
-    });
-    if (controls.cellYRange) controls.cellYRange.addEventListener('change', (e) => {
-        state.config.cellY = Math.max(1, Number(e.target.value));
-        initGame(state.config.cellX, state.config.cellY);
-    });
+    if (controls.cellXRange) {
+        controls.cellXRange.addEventListener('input', (e) => {
+            state.config.cellX = Math.max(1, Number(e.target.value));
+            if (badges.cellX) badges.cellX.textContent = state.config.cellX;
+        });
+        controls.cellXRange.addEventListener('change', (e) => {
+            initGame(state.config.cellX, state.config.cellY);
+        });
+    }
+    if (controls.cellYRange) {
+        controls.cellYRange.addEventListener('input', (e) => {
+            state.config.cellY = Math.max(1, Number(e.target.value));
+            if (badges.cellY) badges.cellY.textContent = state.config.cellY;
+        });
+        controls.cellYRange.addEventListener('change', (e) => {
+            initGame(state.config.cellX, state.config.cellY);
+        });
+    }
 
     // === Density ===
-    controls.densityRange.addEventListener('input', (e) => {
-        state.config.density = Number(e.target.value);
-    });
+    if (controls.densityRange) {
+        controls.densityRange.addEventListener('input', (e) => {
+            state.config.density = Number(e.target.value);
+            if (badges.density) badges.density.textContent = Math.round(state.config.density * 100) + '%';
+        });
+    }
 
     // === FPS ===
-    controls.fpsRange.addEventListener('change', (e) => {
-        setFPS(Number(e.target.value));
-    });
+    if (controls.fpsRange) {
+        controls.fpsRange.addEventListener('input', (e) => {
+            if (badges.fps) badges.fps.textContent = e.target.value;
+        });
+        controls.fpsRange.addEventListener('change', (e) => {
+            setFPS(Number(e.target.value));
+        });
+    }
 
     // === Rule ===
     controls.ruleSelect.addEventListener('change', (e) => {
         state.config.rule = e.target.value;
-        if (controls.customRuleLabel) controls.customRuleLabel.style.display = (e.target.value === 'other' ? '' : 'none');
+        if (controls.customRuleLabel) {
+            controls.customRuleLabel.style.display = (e.target.value === 'other' ? '' : 'none');
+        }
         state.game?.render();
     });
 
     if (controls.customRuleInput) {
         controls.customRuleInput.addEventListener('input', (e) => {
             state.config.customRule = e.target.value;
-            state.game?.render();
+            updateCustomRuleUI();
+            // Only apply if valid
+            if (!validateRuleString(e.target.value)) {
+                state.game?.render();
+            }
         });
+        // Initial UI update
+        updateCustomRuleUI();
+    }
+
+    // === Controls Panel Resizing ===
+    const resizeHandle = document.getElementById('resizeHandle');
+    if (resizeHandle && controls.controlsEl) {
+        let isResizing = false;
+        let startX = 0;
+        let startWidth = 0;
+
+        resizeHandle.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = controls.controlsEl.getBoundingClientRect().width;
+            
+            resizeHandle.classList.add('active');
+            document.body.classList.add('resizing');
+            controls.controlsEl.classList.add('resizing');
+            
+            resizeHandle.setPointerCapture(e.pointerId);
+        });
+
+        resizeHandle.addEventListener('pointermove', (e) => {
+            if (!isResizing) return;
+            // Panel is fixed to the right side, so dragging left (X decrease) increases width
+            const dx = startX - e.clientX;
+            const newWidth = Math.max(200, Math.min(window.innerWidth - 40, startWidth + dx));
+            controls.controlsEl.style.width = newWidth + 'px';
+        });
+
+        const stopResize = (e) => {
+            if (!isResizing) return;
+            isResizing = false;
+            resizeHandle.classList.remove('active');
+            document.body.classList.remove('resizing');
+            controls.controlsEl.classList.remove('resizing');
+            try {
+                resizeHandle.releasePointerCapture(e.pointerId);
+            } catch (err) {}
+            try {
+                localStorage.setItem('controlsWidth', controls.controlsEl.style.width);
+            } catch (err) {}
+        };
+
+        resizeHandle.addEventListener('pointerup', stopResize);
+        resizeHandle.addEventListener('pointercancel', stopResize);
     }
 
     // === Game Controls ===
@@ -478,9 +834,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // === Menu Toggle ===
-    // Restore controls visibility only if explicitly remembered.
-    // Default to closed to avoid unexpected auto-open on load.
-    const stored = localStorage.getItem('controlsVisible');
     updateControlsVisibility(false);
 
     controls.controlsToggle.addEventListener('click', (e) => {
@@ -488,6 +841,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const vis = !document.body.classList.contains('controls-visible');
         updateControlsVisibility(vis);
     });
+
+    const closeControlsBtn = document.getElementById('closeControlsBtn');
+    if (closeControlsBtn) {
+        closeControlsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            updateControlsVisibility(false);
+        });
+    }
 
     if (controls.controlsEl) {
         controls.controlsEl.addEventListener('mouseenter', () => {
@@ -509,7 +870,6 @@ document.addEventListener('DOMContentLoaded', () => {
     state.canvas.style.touchAction = 'none';
     state.canvas.style.cursor = 'crosshair';
 
-    // --- Pointer / Gesture handling: drawing, pan (middle-button / two-finger), pinch-zoom ---
     function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
     state.canvas.addEventListener('pointerdown', (e) => {
@@ -525,13 +885,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (e.pointerType === 'touch') {
-            // track touch pointers for pinch/drag
             state.gesture.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
             if (state.gesture.pointers.size === 1) {
                 state.isPointerDown = true;
                 handlePointerSet(e);
             } else if (state.gesture.pointers.size === 2) {
-                // start gesture
                 const pts = Array.from(state.gesture.pointers.values());
                 const startDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
                 const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
@@ -552,7 +910,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     state.canvas.addEventListener('pointermove', (e) => {
         if (document.body.classList.contains('controls-visible')) return;
-        // Middle-button panning
         if (state.gesture.isPanning) {
             const dx = e.clientX - (state.gesture.panLast?.x || e.clientX);
             const dy = e.clientY - (state.gesture.panLast?.y || e.clientY);
@@ -564,7 +921,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (e.pointerType === 'touch') {
-            // update pointer position
             if (state.gesture.pointers.has(e.pointerId)) {
                 state.gesture.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
             }
@@ -574,7 +930,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const curMid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
                 const gs = state.gesture.gestureStart;
                 const newScale = clamp(gs.startScale * (curDist / gs.startDist), 0.2, 6);
-                // keep midpoint stable
                 const rect = state.canvas.getBoundingClientRect();
                 const midCanvasX = curMid.x - rect.left;
                 const midCanvasY = curMid.y - rect.top;
@@ -588,7 +943,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // Drawing with left mouse / single touch
         if (!state.isPointerDown || !state.game) return;
         const rect = state.canvas.getBoundingClientRect();
         const c = pixelToCell(e.clientX - rect.left, e.clientY - rect.top);
@@ -600,24 +954,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }, { passive: false });
 
-    // pointerup / cancel
     CONSTANTS.POINTER_EVENTS.forEach(ev => {
         state.canvas.addEventListener(ev, (e) => {
             state.isPointerDown = false;
-            // release panning if any
             if (state.gesture.isPanning) {
                 state.gesture.isPanning = false;
                 state.gesture.panLast = null;
                 state.canvas.style.cursor = 'crosshair';
             }
-            // remove pointer from touch map
-            try { state.canvas.releasePointerCapture?.(e.pointerId); } catch (err) {}
+            try { state.canvas.releasePointerCapture?.(e.pointerId); } catch (err) { }
             state.gesture.pointers.delete(e.pointerId);
             if (state.gesture.pointers.size < 2) state.gesture.gestureStart = null;
         });
     });
 
-    // Wheel to zoom (mouse)
     state.canvas.addEventListener('wheel', (e) => {
         if (document.body.classList.contains('controls-visible')) return;
         e.preventDefault();
@@ -627,7 +977,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const delta = -e.deltaY;
         const zoomFactor = Math.exp(delta * 0.0015);
         const newScale = clamp(state.view.scale * zoomFactor, 0.2, 6);
-        // keep pointer position stable during zoom
         const worldX = (px - state.view.offsetX) / state.view.scale;
         const worldY = (py - state.view.offsetY) / state.view.scale;
         state.view.scale = newScale;
@@ -636,7 +985,6 @@ document.addEventListener('DOMContentLoaded', () => {
         state.game?.render();
     }, { passive: false });
 
-    // === Window Events ===
     window.addEventListener('resize', () => {
         if (state.resizeTimer) clearTimeout(state.resizeTimer);
         state.resizeTimer = setTimeout(() => {

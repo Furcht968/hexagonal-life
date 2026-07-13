@@ -1,54 +1,264 @@
 <!DOCTYPE html>
 <html>
-    <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta charset="UTF-8" />
-        <title>Hexagonal Game of Life</title>
-        <link rel="stylesheet" href="style.css" />
-        <link rel="stylesheet" href="fa.css" />
-    </head>
-    <body>
-        <button id="controlsToggle" class="controls-toggle" aria-expanded="false" aria-controls="controls">
-            <i class="fa fa-bars" aria-hidden="true"></i>
-            <span class="sr-only">Menu</span>
-        </button>
-        <button id="pauseToggle" class="top-btn" aria-pressed="false">
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <title>Hexagonal Game of Life</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="fa.css" />
+</head>
+
+<body>
+    <!-- Floating Dock for Main Operations -->
+    <div id="floatingDock" class="floating-dock">
+        <button id="pauseToggle" class="dock-btn" aria-pressed="false" title="Pause / Resume">
             <i class="fa fa-pause" aria-hidden="true"></i>
             <span class="sr-only">Pause</span>
         </button>
-        <button id="clearBtn" class="top-btn" title="Clear">
-            <i class="fa fa-eraser" aria-hidden="true"></i>
-            <span class="sr-only">Clear</span>
-        </button>
-        <button id="stepBtn" class="top-btn" title="Step">
+        <button id="stepBtn" class="dock-btn" title="Step one generation">
             <i class="fa fa-step-forward" aria-hidden="true"></i>
-            <span class="sr-only">Step one generation</span>
+            <span class="sr-only">Step</span>
         </button>
-        <button id="randomize" class="top-btn" title="Randomize">
+        <button id="randomize" class="dock-btn" title="Randomize Grid">
             <i class="fa fa-random" aria-hidden="true"></i>
             <span class="sr-only">Randomize</span>
         </button>
-        <div id="controls" class="controls" aria-hidden="false">
-            <label><input type="checkbox" id="darkToggle"> Dark mode</label>
-            <label>Cells X: <input type="range" id="cellXRange" min="4" max="200" value="32"></label>
-            <label>Cells Y: <input type="range" id="cellYRange" min="4" max="200" value="20"></label>
-            <label>Density: <input type="range" id="densityRange" min="0" max="0.5" step="0.01" value="0.10"></label>
-            <label>FPS: <input type="range" id="fpsRange" min="1" max="60" value="10"></label>
-            <label>Rule:
-                <select id="ruleSelect">
-                    <option value="b245s25">B245/S25</option>
-                    <option value="b2s34">B2/S34</option>
-                    <option value="b2s23">B2/S23</option>
-                    <option value="other">Other (custom)</option>
-                </select>
-            </label>
-            <label id="customRuleLabel" style="display:none">Custom rule: <input type="text" id="customRuleInput" placeholder="B245/S25 or B2/S34"></label>
-            <!-- 'On setting change' removed — always preserve cells on setting changes -->
-            <div>
-                the source code is in <a href="https://github.com/Furcht968/hexagonal-life">here</a>.
-            </div>
+        <button id="clearBtn" class="dock-btn" title="Clear Grid">
+            <i class="fa fa-eraser" aria-hidden="true"></i>
+            <span class="sr-only">Clear</span>
+        </button>
+        <button id="controlsToggle" class="dock-btn" aria-expanded="false" aria-controls="controls" title="Settings">
+            <i class="fa fa-cog" aria-hidden="true"></i>
+            <span class="sr-only">Settings</span>
+        </button>
+    </div>
+
+    <!-- Settings Sidebar -->
+    <div id="controls" class="controls" aria-hidden="false">
+        <div id="resizeHandle" class="resize-handle">
+            <div class="resize-knob"></div>
         </div>
-        <canvas class="canvas"></canvas>
-        <script src="src/main.js"></script>
-    </body>
+
+        <div class="controls-header">
+            <h3>設定 / Settings</h3>
+            <button id="closeControlsBtn" class="close-btn" title="Close Settings">
+                <i class="fa fa-times" aria-hidden="true"></i>
+            </button>
+        </div>
+
+        <div class="control-group">
+            <label class="toggle-container">
+                <span class="toggle-label">ダークモード (Dark Mode)</span>
+                <input type="checkbox" id="darkToggle">
+                <span class="toggle-switch"></span>
+            </label>
+        </div>
+
+        <div class="control-group">
+            <div class="control-header-row">
+                <span>グリッド幅 (Cells X)</span>
+                <span id="cellXValue" class="value-badge">32</span>
+            </div>
+            <input type="range" id="cellXRange" min="4" max="200" value="32">
+        </div>
+
+        <div class="control-group">
+            <div class="control-header-row">
+                <span>グリッド高 (Cells Y)</span>
+                <span id="cellYValue" class="value-badge">20</span>
+            </div>
+            <input type="range" id="cellYRange" min="4" max="200" value="20">
+        </div>
+
+        <div class="control-group">
+            <div class="control-header-row">
+                <span>初期密度 (Density)</span>
+                <span id="densityValue" class="value-badge">10%</span>
+            </div>
+            <input type="range" id="densityRange" min="0" max="0.5" step="0.01" value="0.10">
+        </div>
+
+        <div class="control-group">
+            <div class="control-header-row">
+                <span>速度 (FPS)</span>
+                <span id="fpsValue" class="value-badge">10</span>
+            </div>
+            <input type="range" id="fpsRange" min="1" max="60" value="10">
+        </div>
+
+        <div class="control-group">
+            <label class="select-label">ルール定義 (Rule Sets)</label>
+            <select id="ruleSelect">
+                <option value="b245s25">B245/S25 (標準六角)</option>
+                <option value="b2s34">B2/S34 (ライフ的)</option>
+                <option value="b2s23">B2/S23 (増殖的)</option>
+                <option value="other">カスタムルール (Custom)</option>
+            </select>
+        </div>
+
+        <div id="customRuleLabel" style="display:none" class="control-group">
+            <label class="custom-rule-row">
+                カスタムルール入力:
+                <span id="ruleTypeBadge" class="rule-badge" style="display:none"></span>
+                <input type="text" id="customRuleInput" placeholder="例: B2om3p/S1234-o" autocomplete="off"
+                    spellcheck="false">
+            </label>
+            <div id="ruleError" class="rule-error" style="display:none"></div>
+
+            <!-- Totalistic rule help — shown when badge = Totalistic -->
+            <details id="totRuleHint" style="display:none">
+                <summary>Totalistic (B/S記法) ルール</summary>
+                <div class="int-hint-body">
+                    <p>外部合計ルール。隣接する生きたセルの<strong>数だけ</strong>で次世代が決まります。</p>
+                    <p>書式: <code>B&lt;数列&gt;/S&lt;数列&gt;</code></p>
+                    <ul>
+                        <li><strong>B</strong> (Birth) — 死セルが生まれる隣接生存数</li>
+                        <li><strong>S</strong> (Survival) — 生セルが生き残る隣接生存数</li>
+                    </ul>
+                    <p>六角格子では各セルの隣接数は 0〜6 です。</p>
+                    <table class="int-table">
+                        <thead>
+                            <tr>
+                                <th>隣接数</th>
+                                <th>意味</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>0</td>
+                                <td>孤立</td>
+                            </tr>
+                            <tr>
+                                <td>1〜5</td>
+                                <td>部分的に隣接</td>
+                            </tr>
+                            <tr>
+                                <td>6</td>
+                                <td>完全に囲まれている</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p><strong>例:</strong></p>
+                    <ul>
+                        <li><code>B245/S25</code> — 2,4,5で誕生、2,5で生存</li>
+                        <li><code>B2/S34</code> — 2で誕生、3,4で生存</li>
+                    </ul>
+                </div>
+            </details>
+
+            <!-- INT rule help — shown when badge = INT -->
+            <details id="intRuleHint" style="display:none">
+                <summary>INT (Callahan記法) ルール</summary>
+                <div class="int-hint-body">
+                    <p>Isotropic Non-Totalistic ルール。隣接数だけでなく<strong>配置パターン</strong>によっても次世代が変わります。回転・反転に対して等方的です。</p>
+                    <p>書式: <code>B&lt;指定列&gt;/S&lt;指定列&gt;</code></p>
+                    <p>D<sub>6</sub>対称性から、同数の生存隣接でも以下の同値類に分かれます:</p>
+                    <table class="int-table">
+                        <thead>
+                            <tr>
+                                <th>隣接数</th>
+                                <th>同値類</th>
+                                <th>コード</th>
+                                <th>配置の特徴</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>0</td>
+                                <td>1種類</td>
+                                <td>（なし）</td>
+                                <td>隣接なし</td>
+                            </tr>
+                            <tr>
+                                <td>1</td>
+                                <td>1種類</td>
+                                <td>（なし）</td>
+                                <td>1方向のみ</td>
+                            </tr>
+                            <tr>
+                                <td rowspan="3">2</td>
+                                <td rowspan="3">3種類</td>
+                                <td><code>o</code></td>
+                                <td>2つが隣接 (間隔1辺)</td>
+                            </tr>
+                            <tr>
+                                <td><code>m</code></td>
+                                <td>2つが1個おき (間隔2辺)</td>
+                            </tr>
+                            <tr>
+                                <td><code>p</code></td>
+                                <td>2つが正反対 (間隔3辺)</td>
+                            </tr>
+                            <tr>
+                                <td rowspan="3">3</td>
+                                <td rowspan="3">3種類</td>
+                                <td><code>o</code></td>
+                                <td>3つが連続 (1・1・4の間隔)</td>
+                            </tr>
+                            <tr>
+                                <td><code>m</code></td>
+                                <td>2つ連続+1つ離れ (1・2・3の間隔)</td>
+                            </tr>
+                            <tr>
+                                <td><code>p</code></td>
+                                <td>交互配置 (2・2・2の間隔)</td>
+                            </tr>
+                            <tr>
+                                <td rowspan="3">4</td>
+                                <td rowspan="3">3種類</td>
+                                <td><code>o</code></td>
+                                <td>欠けた2つが隣接 (2=oの補集合)</td>
+                            </tr>
+                            <tr>
+                                <td><code>m</code></td>
+                                <td>欠けた2つが1個おき (2=mの補集合)</td>
+                            </tr>
+                            <tr>
+                                <td><code>p</code></td>
+                                <td>欠けた2つが正反対 (2=pの補集合)</td>
+                            </tr>
+                            <tr>
+                                <td>5</td>
+                                <td>1種類</td>
+                                <td>（なし）</td>
+                                <td>1方向のみ欠け</td>
+                            </tr>
+                            <tr>
+                                <td>6</td>
+                                <td>1種類</td>
+                                <td>（なし）</td>
+                                <td>全隣接</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p><strong>コード修飾子:</strong></p>
+                    <ul>
+                        <li><code>2o</code> — 2個・orthoのみ</li>
+                        <li><code>2om</code> — 2個・orthoまたはmeta</li>
+                        <li><code>2</code> — 2個・全パターン (o+m+p)</li>
+                        <li><code>4-o</code> — 4個・ortho以外すべて (m+p)</li>
+                        <li><code>3-p</code> — 3個・para以外すべて (o+m)</li>
+                    </ul>
+                    <p><strong>例:</strong></p>
+                    <ul>
+                        <li><code>B2o/S12</code> — ortho配置の2近傍で誕生、1または2近傍(全配置)で生存</li>
+                        <li><code>B2om3p/S1234-o</code> — ortho/meta 2近傍または para 3近傍で誕生、ortho以外の4近傍を含む複合条件で生存</li>
+                    </ul>
+                </div>
+            </details>
+        </div>
+
+        <div class="controls-footer">
+            the source code is in <a href="https://github.com/Furcht968/hexagonal-life" target="_blank">here</a>.
+        </div>
+    </div>
+
+    <canvas class="canvas"></canvas>
+    <script src="src/main.js"></script>
+</body>
+
 </html>
