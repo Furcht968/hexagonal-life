@@ -32,6 +32,18 @@
             <i class="fa fa-eraser" aria-hidden="true"></i>
             <span class="sr-only">Clear</span>
         </button>
+        <button id="exportPngBtn" class="dock-btn" title="Export PNG">
+            <i class="fa fa-file-image" aria-hidden="true"></i>
+            <span class="sr-only">Export PNG</span>
+        </button>
+        <button id="exportCsvBtn" class="dock-btn" title="Export CSV (Odd-r)">
+            <i class="fa fa-file-csv" aria-hidden="true"></i>
+            <span class="sr-only">Export CSV</span>
+        </button>
+        <button id="importCsvBtn" class="dock-btn" title="Import CSV (Odd-r)">
+            <i class="fa fa-file-import" aria-hidden="true"></i>
+            <span class="sr-only">Import CSV</span>
+        </button>
         <button id="controlsToggle" class="dock-btn" aria-expanded="false" aria-controls="controls" title="Settings">
             <i class="fa fa-cog" aria-hidden="true"></i>
             <span class="sr-only">Settings</span>
@@ -60,35 +72,59 @@
         </div>
 
         <div class="control-group">
+            <label class="toggle-container">
+                <span class="toggle-label">Torus (wrap edges)</span>
+                <input type="checkbox" id="torusToggle" checked>
+                <span class="toggle-switch"></span>
+            </label>
+        </div>
+
+        <div class="control-group">
+            <div class="control-header-row">
+                <span>Rotation (deg)</span>
+                <span id="rotationValue" class="value-badge">0</span>
+            </div>
+            <input type="range" id="rotationRange" min="-180" max="180" value="0">
+        </div>
+
+        <div class="control-group">
             <div class="control-header-row">
                 <span>Cells X</span>
-                <span id="cellXValue" class="value-badge">32</span>
             </div>
-            <input type="range" id="cellXRange" min="4" max="200" value="32">
+            <div class="input-combo">
+                <input type="range" id="cellXRange" min="4" max="200" value="32">
+                <input type="number" id="cellXInput" min="4" max="200" value="32" class="num-input">
+            </div>
         </div>
 
         <div class="control-group">
             <div class="control-header-row">
                 <span>Cells Y</span>
-                <span id="cellYValue" class="value-badge">20</span>
             </div>
-            <input type="range" id="cellYRange" min="4" max="200" value="20">
+            <div class="input-combo">
+                <input type="range" id="cellYRange" min="4" max="200" value="20">
+                <input type="number" id="cellYInput" min="4" max="200" value="20" class="num-input">
+            </div>
         </div>
 
         <div class="control-group">
             <div class="control-header-row">
                 <span>Density</span>
-                <span id="densityValue" class="value-badge">10%</span>
             </div>
-            <input type="range" id="densityRange" min="0" max="0.5" step="0.01" value="0.10">
+            <div class="input-combo">
+                <input type="range" id="densityRange" min="0" max="0.5" step="0.01" value="0.10">
+                <input type="number" id="densityInput" min="0" max="0.5" step="0.01" value="0.10" class="num-input">
+            </div>
         </div>
 
         <div class="control-group">
             <div class="control-header-row">
                 <span>FPS</span>
-                <span id="fpsValue" class="value-badge">10</span>
             </div>
-            <input type="range" id="fpsRange" min="1" max="60" value="10">
+            <div class="input-combo">
+                <input type="range" id="fpsRange" min="1" max="60" value="10">
+                <input type="number" id="fpsInput" min="1" max="60" value="10" class="num-input">
+            </div>
         </div>
 
         <div class="control-group">
@@ -254,7 +290,7 @@
         </div>
 
         <div class="controls-footer">
-            the source code is in <a href="https://github.com/Furcht968/hexagonal-life" target="_blank">here</a>.
+            <div>the source code is in <a href="https://github.com/Furcht968/hexagonal-life" target="_blank">here</a>.</div>
         </div>
     </div>
 

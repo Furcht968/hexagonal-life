@@ -229,6 +229,7 @@ const state = {
     loopInterval: null,
     resizeTimer: null,
     inactivityTimer: null,
+    rotationSnapTimer: null,
     paused: false,
     isPointerDown: false,
     pointerDrawValue: 1,
@@ -240,7 +241,9 @@ const state = {
         fps: 10,
         dark: window.matchMedia('(prefers-color-scheme: dark)').matches,
         rule: 'b245s25',
-        customRule: ''
+        customRule: '',
+        torus: true,
+        rotation: 0
     },
     // view / interaction state for pan & zoom
     view: {
@@ -298,6 +301,7 @@ class GameOfLife {
     getNeighborMask(x, y) {
         const cx = this.cellX;
         const cy = this.cellY;
+        const wrap = state.config.torus !== false;
         let ns;
         if (y % 2 === 0) {
             ns = [[0, -1], [1, 0], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
@@ -306,9 +310,11 @@ class GameOfLife {
         }
         let mask = 0;
         for (let i = 0; i < 6; i++) {
-            const nx = (x + ns[i][0] + cx) % cx;
-            const ny = (y + ns[i][1] + cy) % cy;
-            if (this.cell[nx][ny]) mask |= (1 << i);
+            const nx = wrap ? (x + ns[i][0] + cx) % cx : x + ns[i][0];
+            const ny = wrap ? (y + ns[i][1] + cy) % cy : y + ns[i][1];
+            if (nx >= 0 && nx < cx && ny >= 0 && ny < cy && this.cell[nx][ny]) {
+                mask |= (1 << i);
+            }
         }
         return mask;
     }
@@ -378,9 +384,15 @@ class GameOfLife {
         this.ctx.fillStyle = this.colors.bg;
         this.ctx.fillRect(0, 0, this.width, this.height);
         this.ctx.strokeStyle = this.colors.stroke;
-        // Apply pan/zoom view transform
+        this.ctx.imageSmoothingEnabled = false;
+        // Apply pan/zoom/rotation view transform
         this.ctx.save();
         const view = state.view || { offsetX: 0, offsetY: 0, scale: 1 };
+        const rcx = this.width / 2;
+        const rcy = this.height / 2;
+        this.ctx.translate(rcx, rcy);
+        this.ctx.rotate((state.config.rotation || 0) * Math.PI / 180);
+        this.ctx.translate(-rcx, -rcy);
         this.ctx.translate(view.offsetX, view.offsetY);
         this.ctx.scale(view.scale, view.scale);
         // Grid (strokes)
@@ -509,6 +521,7 @@ function updateTheme() {
     } else {
         document.body.classList.remove('dark');
     }
+    state.game.render();
 }
 
 function setFPS(fps) {
@@ -611,12 +624,162 @@ function updateCustomRuleUI() {
 // ============================================
 // Pointer / Canvas Editing
 // ============================================
+function exportPNG() {
+    if (!state.game) return;
+    const g = state.game;
+    const cs = g.cellSizeX;
+    const sx = cs * CONSTANTS.HEX_HALF_WIDTH;
+    const sy = cs * CONSTANTS.HEX_HALF_HEIGHT;
+    const minX = cs / 2 - sx;
+    const maxX = g.cellX * cs + sx;
+    const minY = 0;
+    const maxY = (g.cellY - 1) * cs * CONSTANTS.HEX_VERTICAL_SPACING + cs * CONSTANTS.HEX_HALF_HEIGHT + sy;
+    const offc = document.createElement('canvas');
+    offc.width = Math.ceil(maxX - minX);
+    offc.height = Math.ceil(maxY - minY);
+    const offctx = offc.getContext('2d');
+    offctx.imageSmoothingEnabled = false;
+    offctx.fillStyle = g.colors.bg;
+    offctx.fillRect(0, 0, offc.width, offc.height);
+    offctx.strokeStyle = g.colors.stroke;
+    offctx.translate(-minX, -minY);
+    const origCtx = g.ctx;
+    g.ctx = offctx;
+    for (let x = 0; x < g.cellX; x++) {
+        for (let y = 0; y < g.cellY; y++) {
+            g.hexagonDraw(x, y, true);
+        }
+    }
+    offctx.fillStyle = g.colors.fill;
+    for (let x = 0; x < g.cellX; x++) {
+        for (let y = 0; y < g.cellY; y++) {
+            if (g.cell[x][y] === 1) g.hexagonDraw(x, y, false);
+        }
+    }
+    g.ctx = origCtx;
+    const a = document.createElement('a');
+    a.href = offc.toDataURL('image/png');
+    a.download = 'hex-life-export.png';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+function exportCSV() {
+    if (!state.game) return;
+    const g = state.game;
+    const alive = [];
+    for (let y = 0; y < g.cellY; y++) {
+        for (let x = 0; x < g.cellX; x++) {
+            if (g.cell[x][y] === 1) alive.push(x + ',' + y);
+        }
+    }
+    const rule = state.config.rule === 'other' ? (state.config.customRule || 'unknown') : (RULESETS[state.config.rule]?.name || state.config.rule);
+    const header = [
+        '# hexagon-lifegame export',
+        '# cells_x=' + g.cellX,
+        '# cells_y=' + g.cellY,
+        '# rule=' + rule,
+        '# torus=' + (state.config.torus !== false ? 'on' : 'off')
+    ].join('\n');
+    const content = header + '\nx,y\n' + alive.join('\n');
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'hex-life-cells.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function importCSV() {
+    if (!state.game) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv,text/csv';
+    input.addEventListener('change', () => {
+        const file = input.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const text = reader.result;
+            const lines = text.split(/\r?\n/).filter(l => l.trim());
+            let newCellX = state.config.cellX;
+            let newCellY = state.config.cellY;
+            let newRule = state.config.rule;
+            let newCustomRule = state.config.customRule;
+            let newTorus = state.config.torus;
+            let headerEnd = 0;
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (!line.startsWith('#')) { headerEnd = i; break; }
+                const mX = line.match(/cells_x=(\d+)/);
+                if (mX) newCellX = parseInt(mX[1], 10);
+                const mY = line.match(/cells_y=(\d+)/);
+                if (mY) newCellY = parseInt(mY[1], 10);
+                const mR = line.match(/rule=(.+)/);
+                if (mR) {
+                    const ruleName = mR[1].trim();
+                    const preset = Object.entries(RULESETS).find(([, v]) => v.name === ruleName);
+                    newRule = preset ? preset[0] : 'other';
+                    newCustomRule = preset ? '' : ruleName;
+                }
+                const mT = line.match(/torus=(on|off)/);
+                if (mT) newTorus = mT[1] === 'on';
+            }
+            const dataLines = lines.slice(headerEnd);
+            if (newCellX !== state.config.cellX || newCellY !== state.config.cellY) {
+                state.config.cellX = newCellX;
+                state.config.cellY = newCellY;
+                initGame(newCellX, newCellY);
+            }
+            state.config.rule = newRule;
+            state.config.customRule = newCustomRule;
+            state.config.torus = newTorus;
+            const torusEl = document.getElementById('torusToggle');
+            if (torusEl) torusEl.checked = newTorus;
+            const rs = document.getElementById('ruleSelect');
+            if (rs) rs.value = newRule;
+            const cl = document.getElementById('customRuleLabel');
+            const ci = document.getElementById('customRuleInput');
+            if (ci) ci.value = newCustomRule || '';
+            if (cl) cl.style.display = (newRule === 'other' ? '' : 'none');
+            const g = state.game;
+            g.clear();
+            for (let i = 0; i < dataLines.length; i++) {
+                const line = dataLines[i];
+                if (!line.trim()) continue;
+                const parts = line.split(',');
+                if (parts.length < 2) continue;
+                const x = parseInt(parts[0].trim(), 10);
+                const y = parseInt(parts[1].trim(), 10);
+                if (isNaN(x) || isNaN(y)) continue;
+                if (x >= 0 && x < g.cellX && y >= 0 && y < g.cellY) g.cell[x][y] = 1;
+            }
+            g.render();
+        };
+        reader.readAsText(file);
+    });
+    input.click();
+}
+
 function pixelToCell(px, py) {
     if (!state.game) return null;
-    // Account for view (pan/zoom) so pointer maps correctly to cell coords
+    // Account for view (pan/zoom/rotation) so pointer maps correctly to cell coords
     const view = state.view || { offsetX: 0, offsetY: 0, scale: 1 };
-    const tx = (px - view.offsetX) / view.scale;
-    const ty = (py - view.offsetY) / view.scale;
+    const rot = (state.config.rotation || 0) * Math.PI / 180;
+    const hw = state.game.width / 2;
+    const hh = state.game.height / 2;
+    const dx = px - hw;
+    const dy = py - hh;
+    const c = Math.cos(-rot);
+    const s = Math.sin(-rot);
+    const rx = dx * c - dy * s + hw;
+    const ry = dx * s + dy * c + hh;
+    const tx = (rx - view.offsetX) / view.scale;
+    const ty = (ry - view.offsetY) / view.scale;
     const csx = state.game.cellSizeX;
     const csy = state.game.cellSizeY;
     let y = Math.round((ty - csy * CONSTANTS.HEX_HALF_HEIGHT) / (csy * CONSTANTS.HEX_VERTICAL_SPACING));
@@ -920,28 +1083,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        if (e.pointerType === 'touch') {
-            if (state.gesture.pointers.has(e.pointerId)) {
-                state.gesture.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-            }
-            if (state.gesture.pointers.size === 2 && state.gesture.gestureStart) {
-                const pts = Array.from(state.gesture.pointers.values());
-                const curDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-                const curMid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
-                const gs = state.gesture.gestureStart;
-                const newScale = clamp(gs.startScale * (curDist / gs.startDist), 0.2, 6);
-                const rect = state.canvas.getBoundingClientRect();
-                const midCanvasX = curMid.x - rect.left;
-                const midCanvasY = curMid.y - rect.top;
-                const worldX = (gs.startMid.x - rect.left - gs.startOffset.x) / gs.startScale;
-                const worldY = (gs.startMid.y - rect.top - gs.startOffset.y) / gs.startScale;
-                state.view.scale = newScale;
-                state.view.offsetX = midCanvasX - worldX * newScale;
-                state.view.offsetY = midCanvasY - worldY * newScale;
-                state.game?.render();
-                return;
-            }
-        }
+        if (e.pointerType === 'touch') return;
 
         if (!state.isPointerDown || !state.game) return;
         const rect = state.canvas.getBoundingClientRect();
@@ -968,9 +1110,119 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    state.canvas.addEventListener('wheel', (e) => {
+    window.addEventListener('resize', () => {
+        if (state.resizeTimer) clearTimeout(state.resizeTimer);
+        state.resizeTimer = setTimeout(() => {
+            initGame(state.config.cellX, state.config.cellY);
+        }, CONSTANTS.RESIZE_DEBOUNCE_MS);
+    });
+
+    // === Initial State ===
+    updatePauseButton();
+    showFadeTemporary();
+
+    // ===== appended features =====
+
+    function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+    function updateRotationUI() {
+        const b = document.getElementById('rotationValue');
+        if (b) b.textContent = Math.round(state.config.rotation || 0);
+        const r = document.getElementById('rotationRange');
+        if (r) r.value = Math.round(state.config.rotation || 0);
+    }
+
+    function snapRotation() {
+        state.config.rotation = Math.round((state.config.rotation || 0) / 15) * 15;
+        state.config.rotation = clamp(state.config.rotation, -180, 180);
+        updateRotationUI();
+        state.game?.render();
+    }
+
+    function syncAllUI() {
+        const t = document.getElementById('torusToggle');
+        if (t) t.checked = state.config.torus !== false;
+        const xr = document.getElementById('cellXRange');
+        const xi = document.getElementById('cellXInput');
+        if (xr) xr.value = state.config.cellX;
+        if (xi) xi.value = state.config.cellX;
+        const yr = document.getElementById('cellYRange');
+        const yi = document.getElementById('cellYInput');
+        if (yr) yr.value = state.config.cellY;
+        if (yi) yi.value = state.config.cellY;
+        const rs = document.getElementById('ruleSelect');
+        if (rs) rs.value = state.config.rule;
+        const cl = document.getElementById('customRuleLabel');
+        const ci = document.getElementById('customRuleInput');
+        if (ci) ci.value = state.config.customRule || '';
+        if (cl) cl.style.display = (state.config.rule === 'other' ? '' : 'none');
+        updateCustomRuleUI();
+    }
+
+    // --- torus toggle ---
+    const torusToggle = document.getElementById('torusToggle');
+    if (torusToggle) {
+        torusToggle.checked = state.config.torus !== false;
+        torusToggle.addEventListener('change', () => {
+            state.config.torus = torusToggle.checked;
+            state.game?.render();
+        });
+    }
+
+    // --- rotation slider ---
+    const rotationRange = document.getElementById('rotationRange');
+    if (rotationRange) {
+        rotationRange.value = state.config.rotation || 0;
+        rotationRange.addEventListener('input', () => {
+            state.config.rotation = Number(rotationRange.value);
+            updateRotationUI();
+            state.game?.render();
+        });
+    }
+
+    // --- number-input sync for sliders ---
+    function bindNumInput(rangeId, inputId, min, max, configKey, onChange) {
+        const rangeEl = document.getElementById(rangeId);
+        const inputEl = document.getElementById(inputId);
+        if (!rangeEl || !inputEl) return;
+        rangeEl.addEventListener('input', () => {
+            const v = Number(rangeEl.value);
+            inputEl.value = v;
+            state.config[configKey] = v;
+        });
+        rangeEl.addEventListener('change', () => { if (onChange) onChange(); });
+        inputEl.addEventListener('change', () => {
+            const v = clamp(Number(inputEl.value), min, max);
+            inputEl.value = v;
+            rangeEl.value = v;
+            state.config[configKey] = v;
+            if (onChange) onChange();
+        });
+    }
+
+    bindNumInput('cellXRange', 'cellXInput', 4, 200, 'cellX', () => initGame(state.config.cellX, state.config.cellY));
+    bindNumInput('cellYRange', 'cellYInput', 4, 200, 'cellY', () => initGame(state.config.cellX, state.config.cellY));
+    bindNumInput('densityRange', 'densityInput', 0, 0.5, 'density', null);
+    bindNumInput('fpsRange', 'fpsInput', 1, 60, 'fps', () => setFPS(state.config.fps));
+
+    // --- export / import buttons ---
+    document.getElementById('exportPngBtn')?.addEventListener('click', exportPNG);
+    document.getElementById('exportCsvBtn')?.addEventListener('click', exportCSV);
+    document.getElementById('importCsvBtn')?.addEventListener('click', importCSV);
+
+    // --- Ctrl+wheel rotation, plain wheel zoom (unified handler) ---
+    state.canvas.addEventListener('wheel', function ctrlWheel(e) {
         if (document.body.classList.contains('controls-visible')) return;
         e.preventDefault();
+        if (e.ctrlKey) {
+            state.config.rotation = (state.config.rotation || 0) - Math.sign(e.deltaY) * 15;
+            state.config.rotation = clamp(state.config.rotation, -180, 180);
+            updateRotationUI();
+            state.game?.render();
+            if (state.rotationSnapTimer) clearTimeout(state.rotationSnapTimer);
+            state.rotationSnapTimer = setTimeout(() => { snapRotation(); state.rotationSnapTimer = null; }, 500);
+            return;
+        }
         const rect = state.canvas.getBoundingClientRect();
         const px = e.clientX - rect.left;
         const py = e.clientY - rect.top;
@@ -985,16 +1237,61 @@ document.addEventListener('DOMContentLoaded', () => {
         state.game?.render();
     }, { passive: false });
 
-    window.addEventListener('resize', () => {
-        if (state.resizeTimer) clearTimeout(state.resizeTimer);
-        state.resizeTimer = setTimeout(() => {
-            initGame(state.config.cellX, state.config.cellY);
-        }, CONSTANTS.RESIZE_DEBOUNCE_MS);
+    // --- two-finger gesture: augment gestureStart with angle + rotation ---
+    state.canvas.addEventListener('pointerdown', (e) => {
+        if (e.pointerType !== 'touch') return;
+        if (state.gesture.pointers.size >= 2 && state.gesture.gestureStart) {
+            const pts = Array.from(state.gesture.pointers.values());
+            state.gesture.gestureStart.startAngle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+            state.gesture.gestureStart.startRotation = state.config.rotation || 0;
+        }
     });
 
-    // === Initial State ===
-    updatePauseButton();
-    showFadeTemporary();
+    const origPointerMove = state.canvas.onpointermove;
+    state.canvas.addEventListener('pointermove', (e) => {
+        if (state.gesture.pointers.size !== 2 || !state.gesture.gestureStart) return;
+        const gs = state.gesture.gestureStart;
+        if (gs.startAngle === undefined) return;
+        if (state.gesture.pointers.has(e.pointerId))
+            state.gesture.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const pts = Array.from(state.gesture.pointers.values());
+        const curDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        const curAng = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+        const curMid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+        const newScale = clamp(gs.startScale * (curDist / gs.startDist), 0.2, 6);
+        const angDelta = curAng - gs.startAngle;
+        const midDx = curMid.x - gs.startMid.x;
+        const midDy = curMid.y - gs.startMid.y;
+        const rect = state.canvas.getBoundingClientRect();
+        const mx = curMid.x - rect.left;
+        const my = curMid.y - rect.top;
+        const wx = (gs.startMid.x - rect.left - gs.startOffset.x) / gs.startScale;
+        const wy = (gs.startMid.y - rect.top - gs.startOffset.y) / gs.startScale;
+        state.view.scale = newScale;
+        state.view.offsetX = mx - wx * newScale + midDx;
+        state.view.offsetY = my - wy * newScale + midDy;
+        state.config.rotation = clamp((gs.startRotation || 0) + angDelta * (180 / Math.PI), -180, 180);
+        updateRotationUI();
+        state.game?.render();
+    });
+
+    CONSTANTS.POINTER_EVENTS.forEach(ev => {
+        state.canvas.addEventListener(ev, () => {
+            const wasPinching = state.gesture.pointers.size >= 2 && state.gesture.gestureStart;
+            if (state.gesture.pointers.size < 2) {
+                if (wasPinching) snapRotation();
+                state.gesture.gestureStart = null;
+            }
+        });
+    });
+
+    CONSTANTS.POINTER_EVENTS.forEach(ev => {
+        state.canvas.addEventListener(ev, () => {
+            if (state.gesture.pointers.size < 2 && state.gesture.gestureStart) {
+                snapRotation();
+            }
+        });
+    });
 });
 
 // === Initialization ===

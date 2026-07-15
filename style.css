@@ -124,10 +124,10 @@ body.controls-faded .floating-dock {
 }
 
 /* Settings button margin & border replacement */
-#controlsToggle {
+#exportCsvBtn {
     margin-left: 8px;
 }
-#controlsToggle::before {
+#exportCsvBtn::before {
     content: '';
     position: absolute;
     left: -7px;
@@ -313,23 +313,25 @@ body.controls-visible .controls {
 input[type="range"] {
     -webkit-appearance: none;
     width: 100%;
-    height: 4px;
+    height: 6px;
     border-radius: 9999px;
-    background: #cbd5e1;
+    background: rgba(var(--color-primary-rgb), 0.12);
     outline: none;
     margin: 6px 0;
 }
 .dark input[type="range"] {
-    background: #334155;
+    background: rgba(var(--color-primary-rgb), 0.18);
 }
 input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     border-radius: 9999px;
     background: var(--color-primary);
     cursor: pointer;
+    border: 2px solid rgba(var(--color-primary-rgb), 0.2);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
 /* Select Box Customization */
@@ -342,21 +344,23 @@ select {
     width: 100%;
     padding: 6px 8px;
     border-radius: 6px;
-    border: 1px solid rgba(var(--color-primary-rgb), 0.15); /* シンプルな枠線 */
-    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(var(--color-primary-rgb), 0.18);
+    background: rgba(255, 255, 255, 0.7);
     color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: 12px;
     font-weight: 500;
     outline: none;
     cursor: pointer;
-    transition: border-color 150ms ease; /* ホバー・フォーカス transition */
+    transition: border-color 150ms ease;
 }
 .dark select {
-    background: #0f172a;
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(var(--color-primary-rgb), 0.25);
 }
 select:focus {
     border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb), 0.1);
 }
 
 /* Custom Rule Row styling */
@@ -380,7 +384,7 @@ select:focus {
     transition: border-color 150ms ease;
 }
 .dark #customRuleInput {
-    background: #0f172a;
+    background: rgba(255, 255, 255, 0.05);
 }
 #customRuleInput:focus {
     outline: none;
@@ -558,6 +562,51 @@ body.resizing {
 }
 .controls-footer a:hover {
     text-decoration: underline;
+}
+.controls-footer .pan-hint {
+    font-size: 10px;
+    opacity: 0.6;
+    margin-bottom: 4px;
+}
+
+/* Input combo: range slider + number input side by side */
+.input-combo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.input-combo input[type="range"] {
+    flex: 1;
+    margin: 6px 0;
+}
+.num-input {
+    width: 58px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(var(--color-primary-rgb), 0.18);
+    background: rgba(255, 255, 255, 0.7);
+    color: var(--text-primary);
+    font-family: monospace;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    outline: none;
+    -moz-appearance: textfield;
+    height: 28px;
+    box-sizing: border-box;
+}
+.num-input::-webkit-outer-spin-button,
+.num-input::-webkit-inner-spin-button {
+    opacity: 1;
+    height: 24px;
+}
+.dark .num-input {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(var(--color-primary-rgb), 0.25);
+}
+.num-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb), 0.1);
 }
 
 /* ==========================================================================
