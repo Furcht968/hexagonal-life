@@ -30,7 +30,8 @@ const CONSTANTS = {
 const RULESETS = {
     b245s25: { birth: [2, 4, 5], survival: [2, 5], name: 'B245/S25', type: 'totalistic' },
     b2s34: { birth: [2], survival: [3, 4], name: 'B2/S34', type: 'totalistic' },
-    b2s23: { birth: [2], survival: [2, 3], name: 'B2/S23', type: 'totalistic' }
+    b2s23: { birth: [2], survival: [2, 3], name: 'B2/S23', type: 'totalistic' },
+    blossomflake: { birth: new Set(['2o', '3o', '3p', '4o']), survival: new Set(['1', '2m', '4p', '5']), name: 'B2o3op4os12m4p5/S2o3op4os12m4p5', type: 'int' }
 };
 
 // ============================================
@@ -217,7 +218,7 @@ function getActiveRule() {
 function validateRuleString(str) {
     if (!str || !str.trim()) return null; // empty is ok (will use default)
     const r = parseRuleString(str.trim());
-    if (!r) return '無効な形式。例: B2om3p/S1234-o (INT) または B245/S25 (合計)';
+    if (!r) return 'Invalid format. e.g. B2om3p/S1234-o (INT) or B245/S25 (Totalistic)';
     return null;
 }
 
