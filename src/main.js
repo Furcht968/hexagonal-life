@@ -510,6 +510,20 @@ function initGame(cellCountX = state.config.cellX, cellCountY = state.config.cel
     }
 
     setFPS(state.config.fps);
+
+    // Sync UI after possible cell size rounding
+    const xr = document.getElementById('cellXRange');
+    const xi = document.getElementById('cellXInput');
+    const bx = document.getElementById('cellXValue');
+    if (xr) xr.value = state.config.cellX;
+    if (xi) xi.value = state.config.cellX;
+    if (bx) bx.textContent = state.config.cellX;
+    const yr = document.getElementById('cellYRange');
+    const yi = document.getElementById('cellYInput');
+    const by = document.getElementById('cellYValue');
+    if (yr) yr.value = state.config.cellY;
+    if (yi) yi.value = state.config.cellY;
+    if (by) by.textContent = state.config.cellY;
 }
 
 function updateTheme() {
@@ -823,11 +837,8 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // === Initialize UI values ===
+    syncAllUI();
     controls.darkToggle.checked = state.config.dark;
-    if (controls.cellXRange) controls.cellXRange.value = state.config.cellX;
-    if (controls.cellYRange) controls.cellYRange.value = state.config.cellY;
-    controls.densityRange.value = state.config.density;
-    controls.fpsRange.value = state.config.fps;
     controls.ruleSelect.value = state.config.rule;
     if (controls.customRuleInput) controls.customRuleInput.value = state.config.customRule || '';
     if (controls.customRuleLabel) {
@@ -864,43 +875,9 @@ document.addEventListener('DOMContentLoaded', () => {
         updateTheme();
     });
 
-    // === Grid Size Change (cells X/Y) ===
-    if (controls.cellXRange) {
-        controls.cellXRange.addEventListener('input', (e) => {
-            state.config.cellX = Math.max(1, Number(e.target.value));
-            if (badges.cellX) badges.cellX.textContent = state.config.cellX;
-        });
-        controls.cellXRange.addEventListener('change', (e) => {
-            initGame(state.config.cellX, state.config.cellY);
-        });
-    }
-    if (controls.cellYRange) {
-        controls.cellYRange.addEventListener('input', (e) => {
-            state.config.cellY = Math.max(1, Number(e.target.value));
-            if (badges.cellY) badges.cellY.textContent = state.config.cellY;
-        });
-        controls.cellYRange.addEventListener('change', (e) => {
-            initGame(state.config.cellX, state.config.cellY);
-        });
-    }
+    
 
-    // === Density ===
-    if (controls.densityRange) {
-        controls.densityRange.addEventListener('input', (e) => {
-            state.config.density = Number(e.target.value);
-            if (badges.density) badges.density.textContent = Math.round(state.config.density * 100) + '%';
-        });
-    }
-
-    // === FPS ===
-    if (controls.fpsRange) {
-        controls.fpsRange.addEventListener('input', (e) => {
-            if (badges.fps) badges.fps.textContent = e.target.value;
-        });
-        controls.fpsRange.addEventListener('change', (e) => {
-            setFPS(Number(e.target.value));
-        });
-    }
+    
 
     // === Rule ===
     controls.ruleSelect.addEventListener('change', (e) => {
@@ -1150,6 +1127,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const yi = document.getElementById('cellYInput');
         if (yr) yr.value = state.config.cellY;
         if (yi) yi.value = state.config.cellY;
+        const dr = document.getElementById('densityRange');
+        const di = document.getElementById('densityInput');
+        if (dr) dr.value = state.config.density;
+        if (di) di.value = state.config.density;
+        const fr = document.getElementById('fpsRange');
+        const fi = document.getElementById('fpsInput');
+        if (fr) fr.value = state.config.fps;
+        if (fi) fi.value = state.config.fps;
         const rs = document.getElementById('ruleSelect');
         if (rs) rs.value = state.config.rule;
         const cl = document.getElementById('customRuleLabel');
@@ -1185,10 +1170,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const rangeEl = document.getElementById(rangeId);
         const inputEl = document.getElementById(inputId);
         if (!rangeEl || !inputEl) return;
+        rangeEl.value = state.config[configKey];
+        inputEl.value = state.config[configKey];
         rangeEl.addEventListener('input', () => {
             const v = Number(rangeEl.value);
             inputEl.value = v;
             state.config[configKey] = v;
+            updateBadges();
         });
         rangeEl.addEventListener('change', () => { if (onChange) onChange(); });
         inputEl.addEventListener('change', () => {
@@ -1196,12 +1184,13 @@ document.addEventListener('DOMContentLoaded', () => {
             inputEl.value = v;
             rangeEl.value = v;
             state.config[configKey] = v;
+            updateBadges();
             if (onChange) onChange();
         });
     }
 
-    bindNumInput('cellXRange', 'cellXInput', 4, 200, 'cellX', () => initGame(state.config.cellX, state.config.cellY));
-    bindNumInput('cellYRange', 'cellYInput', 4, 200, 'cellY', () => initGame(state.config.cellX, state.config.cellY));
+    bindNumInput('cellXRange', 'cellXInput', 4, 500, 'cellX', () => initGame(state.config.cellX, state.config.cellY));
+    bindNumInput('cellYRange', 'cellYInput', 4, 500, 'cellY', () => initGame(state.config.cellX, state.config.cellY));
     bindNumInput('densityRange', 'densityInput', 0, 0.5, 'density', null);
     bindNumInput('fpsRange', 'fpsInput', 1, 60, 'fps', () => setFPS(state.config.fps));
 
