@@ -360,8 +360,48 @@ class GameOfLife {
         this.cellSizeX = width / cellX;
         this.cellSizeY = height / cellY;
         this.cell = Array.from({ length: cellX }, () => Array(cellY).fill(0));
+        this.nextCell = Array.from({ length: cellX }, () => Array(cellY).fill(0));
         this.frontier = new Set();
+        this.population = 0;
+        this.dense = false;
+        this.ruleSignature = '';
+        this.ruleLUT = new Uint8Array(128);
+        this.blockTables = [new Uint8Array(65536), new Uint8Array(65536)];
+        this.gridPath = null;
         this.colors = { fill: '#000', stroke: '#ccc', bg: '#fff' };
+    }
+
+    compileRule(rule) {
+        const signature = state.config.rule === 'other' ? state.config.customRule : state.config.rule;
+        if (signature === this.ruleSignature) return;
+        this.ruleSignature = signature;
+        for (let center = 0; center < 2; center++) {
+            for (let mask = 0; mask < 64; mask++) {
+                this.ruleLUT[(center << 6) | mask] = rule.type === 'int'
+                    ? (center ? rule.survival.has(HEX_CLASS[mask]) : rule.birth.has(HEX_CLASS[mask]))
+                    : (center ? rule.survival.includes(popcount6(mask)) : rule.birth.includes(popcount6(mask))) ? 1 : 0;
+            }
+        }
+
+        for (let parity = 0; parity < 2; parity++) {
+            const table = this.blockTables[parity];
+            for (let pattern = 0; pattern < 65536; pattern++) {
+                let result = 0;
+                const cellAt = (lx, ly) => (pattern >>> (ly * 4 + lx)) & 1;
+                const outputs = [[1, 1], [2, 1], [1, 2], [2, 2]];
+                for (let out = 0; out < 4; out++) {
+                    const [lx, ly] = outputs[out];
+                    const rowParity = (parity + ly - 1) & 1;
+                    let mask = 0;
+                    for (let d = 0; d < 6; d++) {
+                        const delta = NEIGHBORS[rowParity][d];
+                        mask |= cellAt(lx + delta[0], ly + delta[1]) << d;
+                    }
+                    result |= this.ruleLUT[(cellAt(lx, ly) << 6) | mask] << out;
+                }
+                table[pattern] = result;
+            }
+        }
     }
 
     neighborAt(x, y, direction) {
@@ -384,11 +424,25 @@ class GameOfLife {
         }
     }
 
+    setCell(x, y, value) {
+        const previous = this.cell[x][y];
+        if (previous === value) return;
+        this.cell[x][y] = value;
+        this.population += value ? 1 : -1;
+        this.dense = this.population > this.cellX * this.cellY * 0.15;
+        this.addInfluence(x, y);
+    }
+
     rebuildFrontier() {
         this.frontier.clear();
+        this.population = 0;
         for (let x = 0; x < this.cellX; x++) for (let y = 0; y < this.cellY; y++) {
-            if (this.cell[x][y]) this.addInfluence(x, y);
+            if (this.cell[x][y]) {
+                this.population++;
+                this.addInfluence(x, y);
+            }
         }
+        this.dense = this.population > this.cellX * this.cellY * 0.15;
     }
 
     // Returns 6-bit bitmask of neighbor states.
@@ -436,28 +490,69 @@ class GameOfLife {
 
     nextGeneration() {
         const rule = getActiveRule();
-        // A B0 rule can create cells far from the existing population; it is
-        // the only case that requires a full sweep.  All other rules only need
-        // living cells and their six neighbours (QuickLife-style frontier).
-        const birthsAtZero = rule.type === 'int' ? rule.birth.has('0') : rule.birth.includes(0);
+        this.compileRule(rule);
+        const total = this.cellX * this.cellY;
+        const birthsAtZero = this.ruleLUT[0] === 1;
+
+        if ((this.dense || birthsAtZero || this.frontier.size > total * 0.5) &&
+            this.cellX % 2 === 0 && this.cellY % 2 === 0) {
+            let population = 0;
+            const sample = (x, y) => {
+                if (state.config.torus !== false) {
+                    x = (x + this.cellX) % this.cellX;
+                    y = (y + this.cellY) % this.cellY;
+                    return this.cell[x][y];
+                }
+                return x >= 0 && x < this.cellX && y >= 0 && y < this.cellY ? this.cell[x][y] : 0;
+            };
+            for (let y = 0; y < this.cellY; y += 2) {
+                const table = this.blockTables[y & 1];
+                for (let x = 0; x < this.cellX; x += 2) {
+                    let pattern = 0;
+                    let bit = 0;
+                    for (let ly = -1; ly <= 2; ly++) for (let lx = -1; lx <= 2; lx++, bit++) {
+                        pattern |= sample(x + lx, y + ly) << bit;
+                    }
+                    const value = table[pattern];
+                    this.nextCell[x][y] = value & 1;
+                    this.nextCell[x + 1][y] = (value >>> 1) & 1;
+                    this.nextCell[x][y + 1] = (value >>> 2) & 1;
+                    this.nextCell[x + 1][y + 1] = (value >>> 3) & 1;
+                    population += (value & 1) + ((value >>> 1) & 1) + ((value >>> 2) & 1) + ((value >>> 3) & 1);
+                }
+            }
+            const old = this.cell;
+            this.cell = this.nextCell;
+            this.nextCell = old;
+            this.population = population;
+            this.dense = population > total * 0.15;
+            if (this.dense) this.frontier.clear();
+            else this.rebuildFrontier();
+            return;
+        }
+
         const candidates = birthsAtZero
             ? Array.from({ length: this.cellX * this.cellY }, (_, i) => i)
             : this.frontier;
         const changes = [];
         const nextFrontier = new Set();
+        let population = this.population;
         for (const index of candidates) {
             const x = index % this.cellX;
             const y = Math.floor(index / this.cellX);
             const mask = this.getNeighborMask(x, y);
-            const allowed = rule.type === 'int'
-                ? (this.cell[x][y] ? rule.survival.has(HEX_CLASS[mask]) : rule.birth.has(HEX_CLASS[mask]))
-                : (this.cell[x][y] ? rule.survival.includes(popcount6(mask)) : rule.birth.includes(popcount6(mask)));
-            const value = allowed ? 1 : 0;
-            if (value !== this.cell[x][y]) changes.push([x, y, value]);
+            const oldValue = this.cell[x][y];
+            const value = this.ruleLUT[(oldValue << 6) | mask];
+            if (value !== oldValue) {
+                changes.push([x, y, value]);
+                population += value ? 1 : -1;
+            }
             if (value) this.addInfluence(x, y, nextFrontier);
         }
         for (const [x, y, value] of changes) this.cell[x][y] = value;
         this.frontier = nextFrontier;
+        this.population = population;
+        this.dense = population > total * 0.15;
     }
 
     hexagonDraw(x, y, gridOnly = false) {
@@ -496,20 +591,45 @@ class GameOfLife {
         this.ctx.translate(-rcx, -rcy);
         this.ctx.translate(view.offsetX, view.offsetY);
         this.ctx.scale(view.scale, view.scale);
-        // Grid (strokes)
-        for (let x = 0; x < this.cellX; x++) {
-            for (let y = 0; y < this.cellY; y++) {
-                this.hexagonDraw(x, y, true);
+        // Cache the static grid and draw all live hexagons in one path. The
+        // previous renderer performed up to 60,000 separate Canvas paths on a
+        // 200x200 half-filled board.
+        if (!this.gridPath && typeof Path2D !== 'undefined') {
+            this.gridPath = new Path2D();
+            for (let x = 0; x < this.cellX; x++) for (let y = 0; y < this.cellY; y++) {
+                this.appendHexPath(this.gridPath, x, y);
             }
         }
-        // Cells (fill)
+        if (this.gridPath) this.ctx.stroke(this.gridPath);
+        else {
+            this.ctx.beginPath();
+            for (let x = 0; x < this.cellX; x++) for (let y = 0; y < this.cellY; y++) this.appendHexPath(this.ctx, x, y);
+            this.ctx.stroke();
+        }
         this.ctx.fillStyle = this.colors.fill;
-        for (let x = 0; x < this.cellX; x++) {
-            for (let y = 0; y < this.cellY; y++) {
-                if (this.cell[x][y] === 1) this.hexagonDraw(x, y, false);
-            }
+        const livePath = typeof Path2D !== 'undefined' ? new Path2D() : this.ctx;
+        if (!this.gridPath) this.ctx.beginPath();
+        for (let x = 0; x < this.cellX; x++) for (let y = 0; y < this.cellY; y++) {
+            if (this.cell[x][y]) this.appendHexPath(livePath, x, y);
         }
+        if (livePath === this.ctx) this.ctx.fill();
+        else this.ctx.fill(livePath);
         this.ctx.restore();
+    }
+
+    appendHexPath(path, x, y) {
+        const sizeX = this.cellSizeX * CONSTANTS.HEX_HALF_WIDTH;
+        const sizeY = this.cellSizeY * CONSTANTS.HEX_HALF_HEIGHT;
+        const offsetX = (y % 2) * (this.cellSizeX / 2);
+        const centerX = x * this.cellSizeX + this.cellSizeX / 2 + offsetX;
+        const centerY = y * (this.cellSizeY * CONSTANTS.HEX_VERTICAL_SPACING) + this.cellSizeY * CONSTANTS.HEX_HALF_HEIGHT;
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 6;
+            const px = centerX + sizeX * Math.cos(angle);
+            const py = centerY + sizeY * Math.sin(angle);
+            if (i === 0) path.moveTo(px, py); else path.lineTo(px, py);
+        }
+        path.closePath();
     }
 
     fillRandom(density) {
@@ -528,6 +648,8 @@ class GameOfLife {
             }
         }
         this.frontier.clear();
+        this.population = 0;
+        this.dense = false;
     }
 
     setColor(colors) {
@@ -930,8 +1052,7 @@ function handlePointerSet(e) {
     if (!c) return;
     if (c.x < 0 || c.x >= state.game.cellX || c.y < 0 || c.y >= state.game.cellY) return;
     state.pointerDrawValue = state.game.cell[c.x][c.y] ? 0 : 1;
-    state.game.cell[c.x][c.y] = state.pointerDrawValue;
-    state.game.addInfluence(c.x, c.y);
+    state.game.setCell(c.x, c.y, state.pointerDrawValue);
     scheduleURLSync();
     state.game.render();
 }
@@ -1233,8 +1354,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!c) return;
         if (c.x < 0 || c.x >= state.game.cellX || c.y < 0 || c.y >= state.game.cellY) return;
         if (state.game.cell[c.x][c.y] !== state.pointerDrawValue) {
-            state.game.cell[c.x][c.y] = state.pointerDrawValue;
-            state.game.addInfluence(c.x, c.y);
+            state.game.setCell(c.x, c.y, state.pointerDrawValue);
             scheduleURLSync();
             state.game.render();
         }
