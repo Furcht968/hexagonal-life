@@ -32,23 +32,27 @@
             <i class="fa fa-eraser" aria-hidden="true"></i>
             <span class="sr-only">Clear</span>
         </button>
-        <button id="exportPngBtn" class="dock-btn" title="Export PNG">
-            <i class="fa fa-file-image" aria-hidden="true"></i>
-            <span class="sr-only">Export PNG</span>
-        </button>
-        <button id="exportCsvBtn" class="dock-btn" title="Export CSV (Odd-r)">
-            <i class="fa fa-file-csv" aria-hidden="true"></i>
-            <span class="sr-only">Export CSV</span>
-        </button>
-        <button id="importCsvBtn" class="dock-btn" title="Import CSV (Odd-r)">
-            <i class="fa fa-file-import" aria-hidden="true"></i>
-            <span class="sr-only">Import CSV</span>
+        <div class="file-menu">
+            <button id="fileMenuToggle" class="dock-btn" aria-expanded="false" aria-controls="fileMenu" title="File operations">
+                <i class="fa fa-folder-open" aria-hidden="true"></i>
+                <span class="sr-only">File operations</span>
+            </button>
+            <div id="fileMenu" class="file-menu-popover" role="menu">
+                <button id="exportPngBtn" role="menuitem"><i class="fa fa-file-image" aria-hidden="true"></i>Save PNG</button>
+                <button id="exportCsvBtn" role="menuitem"><i class="fa fa-file-csv" aria-hidden="true"></i>Export CSV</button>
+                <button id="importCsvBtn" role="menuitem"><i class="fa fa-file-import" aria-hidden="true"></i>Import CSV</button>
+            </div>
+        </div>
+        <button id="shareBtn" class="dock-btn" title="Copy share URL">
+            <i class="fa fa-share-alt" aria-hidden="true"></i>
+            <span class="sr-only">Copy share URL</span>
         </button>
         <button id="controlsToggle" class="dock-btn" aria-expanded="false" aria-controls="controls" title="Settings">
             <i class="fa fa-cog" aria-hidden="true"></i>
             <span class="sr-only">Settings</span>
         </button>
     </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <!-- Settings Sidebar -->
     <div id="controls" class="controls" aria-hidden="false">

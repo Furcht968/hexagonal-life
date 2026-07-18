@@ -26,12 +26,19 @@ const CONSTANTS = {
     }
 };
 
+// Clockwise neighbor offsets for odd-r horizontal hex grids.  Keeping these
+// outside the hot loop avoids allocating six small arrays for every cell.
+const NEIGHBORS = [
+    [[0, -1], [1, 0], [0, 1], [-1, 1], [-1, 0], [-1, -1]],
+    [[1, -1], [1, 0], [1, 1], [0, 1], [-1, 0], [0, -1]]
+];
+
 // === Rule Definitions ===
 const RULESETS = {
     b245s25: { birth: [2, 4, 5], survival: [2, 5], name: 'B245/S25', type: 'totalistic' },
     b2s34: { birth: [2], survival: [3, 4], name: 'B2/S34', type: 'totalistic' },
     b2s23: { birth: [2], survival: [2, 3], name: 'B2/S23', type: 'totalistic' },
-    blossomflake: { birth: new Set(['2o', '3o', '3p', '4o']), survival: new Set(['1', '2m', '4p', '5']), name: 'B2o3op4os12m4p5/S2o3op4os12m4p5', type: 'int' }
+    blossomflake: { birth: new Set(['2o', '3o', '3p', '4o']), survival: new Set(['1', '2m', '4p', '5']), name: 'B2o3op4o/S12m4p5', type: 'int' }
 };
 
 // ============================================
@@ -258,10 +265,87 @@ const state = {
         panLast: null,
         pointers: new Map(),
         gestureStart: null
-    }
+    },
+    pendingCells: null,
+    urlSyncTimer: null,
+    toastTimer: null,
+    embed: false
 };
 
+// URL state is deliberately self-contained: dimensions, rule, edge mode and
+// every cell are encoded in the query string.  Cells are packed one bit each,
+// then base64url encoded, so ordinary patterns remain compact enough to share.
+function encodeCells(game) {
+    const bytes = new Uint8Array(Math.ceil(game.cellX * game.cellY / 8));
+    let bit = 0;
+    for (let y = 0; y < game.cellY; y++) for (let x = 0; x < game.cellX; x++, bit++) {
+        if (game.cell[x][y]) bytes[bit >> 3] |= 1 << (bit & 7);
+    }
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodeCells(encoded, cellX, cellY) {
+    if (!encoded || !/^[A-Za-z0-9_-]+$/.test(encoded)) return null;
+    try {
+        const padded = encoded.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((encoded.length + 3) % 4);
+        const binary = atob(padded);
+        const count = cellX * cellY;
+        if (binary.length < Math.ceil(count / 8)) return null;
+        const cells = [];
+        let bit = 0;
+        for (let y = 0; y < cellY; y++) for (let x = 0; x < cellX; x++, bit++) {
+            if ((binary.charCodeAt(bit >> 3) >> (bit & 7)) & 1) cells.push([x, y]);
+        }
+        return cells;
+    } catch (_) { return null; }
+}
+
+function loadURLState() {
+    const p = new URLSearchParams(window.location.search);
+    const x = Number(p.get('x'));
+    const y = Number(p.get('y'));
+    if (Number.isInteger(x) && x >= 4 && x <= 500) state.config.cellX = x;
+    if (Number.isInteger(y) && y >= 4 && y <= 500) state.config.cellY = y;
+    const rule = p.get('rule');
+    if (rule && parseRuleString(rule)) {
+        const preset = Object.entries(RULESETS).find(([, value]) => value.name.toLowerCase() === rule.toLowerCase());
+        state.config.rule = preset ? preset[0] : 'other';
+        state.config.customRule = preset ? '' : rule;
+    }
+    if (p.has('torus')) state.config.torus = p.get('torus') !== '0';
+    state.embed = p.get('embed') === '1';
+    state.pendingCells = decodeCells(p.get('cells'), state.config.cellX, state.config.cellY);
+}
+
+function shareURL() {
+    if (!state.game) return window.location.href;
+    const url = new URL(window.location.href);
+    const p = url.searchParams;
+    p.set('v', '1');
+    p.set('x', state.game.cellX);
+    p.set('y', state.game.cellY);
+    p.set('rule', state.config.rule === 'other' ? state.config.customRule : RULESETS[state.config.rule].name);
+    p.set('torus', state.config.torus !== false ? '1' : '0');
+    p.set('cells', encodeCells(state.game));
+    return url.toString();
+}
+
+function scheduleURLSync() {
+    if (state.urlSyncTimer) clearTimeout(state.urlSyncTimer);
+    state.urlSyncTimer = setTimeout(() => history.replaceState(null, '', shareURL()), 250);
+}
+
+loadURLState();
+
 state.ctx = state.canvas.getContext('2d');
+
+function popcount6(mask) {
+    mask = mask - ((mask >>> 1) & 0x15);
+    mask = (mask & 0x33) + ((mask >>> 2) & 0x33);
+    return (mask + (mask >>> 4)) & 0x07;
+}
 
 // ============================================
 // Game of Life Class
@@ -276,7 +360,35 @@ class GameOfLife {
         this.cellSizeX = width / cellX;
         this.cellSizeY = height / cellY;
         this.cell = Array.from({ length: cellX }, () => Array(cellY).fill(0));
+        this.frontier = new Set();
         this.colors = { fill: '#000', stroke: '#ccc', bg: '#fff' };
+    }
+
+    neighborAt(x, y, direction) {
+        const delta = NEIGHBORS[y & 1][direction];
+        let nx = x + delta[0];
+        let ny = y + delta[1];
+        if (state.config.torus !== false) {
+            nx = (nx + this.cellX) % this.cellX;
+            ny = (ny + this.cellY) % this.cellY;
+            return [nx, ny];
+        }
+        return nx >= 0 && nx < this.cellX && ny >= 0 && ny < this.cellY ? [nx, ny] : null;
+    }
+
+    addInfluence(x, y, target = this.frontier) {
+        target.add(y * this.cellX + x);
+        for (let i = 0; i < 6; i++) {
+            const n = this.neighborAt(x, y, i);
+            if (n) target.add(n[1] * this.cellX + n[0]);
+        }
+    }
+
+    rebuildFrontier() {
+        this.frontier.clear();
+        for (let x = 0; x < this.cellX; x++) for (let y = 0; y < this.cellY; y++) {
+            if (this.cell[x][y]) this.addInfluence(x, y);
+        }
     }
 
     // Returns 6-bit bitmask of neighbor states.
@@ -303,16 +415,11 @@ class GameOfLife {
         const cx = this.cellX;
         const cy = this.cellY;
         const wrap = state.config.torus !== false;
-        let ns;
-        if (y % 2 === 0) {
-            ns = [[0, -1], [1, 0], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
-        } else {
-            ns = [[1, -1], [1, 0], [1, 1], [0, 1], [-1, 0], [0, -1]];
-        }
         let mask = 0;
         for (let i = 0; i < 6; i++) {
-            const nx = wrap ? (x + ns[i][0] + cx) % cx : x + ns[i][0];
-            const ny = wrap ? (y + ns[i][1] + cy) % cy : y + ns[i][1];
+            const delta = NEIGHBORS[y & 1][i];
+            const nx = wrap ? (x + delta[0] + cx) % cx : x + delta[0];
+            const ny = wrap ? (y + delta[1] + cy) % cy : y + delta[1];
             if (nx >= 0 && nx < cx && ny >= 0 && ny < cy && this.cell[nx][ny]) {
                 mask |= (1 << i);
             }
@@ -329,35 +436,28 @@ class GameOfLife {
 
     nextGeneration() {
         const rule = getActiveRule();
-        const next = Array.from({ length: this.cellX }, () => Array(this.cellY).fill(0));
-
-        if (rule.type === 'int') {
-            // INT rule: use bitmask + isotropic class lookup
-            for (let x = 0; x < this.cellX; x++) {
-                for (let y = 0; y < this.cellY; y++) {
-                    const mask = this.getNeighborMask(x, y);
-                    const cls = HEX_CLASS[mask];
-                    if (this.cell[x][y] === 1) {
-                        next[x][y] = rule.survival.has(cls) ? 1 : 0;
-                    } else {
-                        next[x][y] = rule.birth.has(cls) ? 1 : 0;
-                    }
-                }
-            }
-        } else {
-            // Totalistic rule: count neighbors only
-            for (let x = 0; x < this.cellX; x++) {
-                for (let y = 0; y < this.cellY; y++) {
-                    const neighbors = this.countNeighbors(x, y);
-                    if (this.cell[x][y] === 1) {
-                        next[x][y] = rule.survival.includes(neighbors) ? 1 : 0;
-                    } else {
-                        next[x][y] = rule.birth.includes(neighbors) ? 1 : 0;
-                    }
-                }
-            }
+        // A B0 rule can create cells far from the existing population; it is
+        // the only case that requires a full sweep.  All other rules only need
+        // living cells and their six neighbours (QuickLife-style frontier).
+        const birthsAtZero = rule.type === 'int' ? rule.birth.has('0') : rule.birth.includes(0);
+        const candidates = birthsAtZero
+            ? Array.from({ length: this.cellX * this.cellY }, (_, i) => i)
+            : this.frontier;
+        const changes = [];
+        const nextFrontier = new Set();
+        for (const index of candidates) {
+            const x = index % this.cellX;
+            const y = Math.floor(index / this.cellX);
+            const mask = this.getNeighborMask(x, y);
+            const allowed = rule.type === 'int'
+                ? (this.cell[x][y] ? rule.survival.has(HEX_CLASS[mask]) : rule.birth.has(HEX_CLASS[mask]))
+                : (this.cell[x][y] ? rule.survival.includes(popcount6(mask)) : rule.birth.includes(popcount6(mask)));
+            const value = allowed ? 1 : 0;
+            if (value !== this.cell[x][y]) changes.push([x, y, value]);
+            if (value) this.addInfluence(x, y, nextFrontier);
         }
-        this.cell = next;
+        for (const [x, y, value] of changes) this.cell[x][y] = value;
+        this.frontier = nextFrontier;
     }
 
     hexagonDraw(x, y, gridOnly = false) {
@@ -418,6 +518,7 @@ class GameOfLife {
                 this.cell[x][y] = Math.random() < density ? 1 : 0;
             }
         }
+        this.rebuildFrontier();
     }
 
     clear() {
@@ -426,6 +527,7 @@ class GameOfLife {
                 this.cell[x][y] = 0;
             }
         }
+        this.frontier.clear();
     }
 
     setColor(colors) {
@@ -499,7 +601,11 @@ function initGame(cellCountX = state.config.cellX, cellCountY = state.config.cel
     updateTheme();
 
     // 初期起動時のみにランダム配置、サイズ変更時は既存セルを保持
-    if (action === 'random' || !prevCells) {
+    if (state.pendingCells) {
+        state.game.clear();
+        for (const [x, y] of state.pendingCells) state.game.cell[x][y] = 1;
+        state.pendingCells = null;
+    } else if (action === 'random' || !prevCells) {
         state.game.fillRandom(state.config.density);
     }
 
@@ -509,6 +615,7 @@ function initGame(cellCountX = state.config.cellX, cellCountY = state.config.cel
             state.game.cell[x][y] = prevCells[x][y];
         }
     }
+    state.game.rebuildFrontier();
 
     setFPS(state.config.fps);
 
@@ -550,6 +657,7 @@ function setFPS(fps) {
         if (!state.game) return;
         state.game.render();
         state.game.nextGeneration();
+        scheduleURLSync();
     }, 1000 / state.config.fps);
 }
 
@@ -584,6 +692,15 @@ function showFadeTemporary() {
     state.inactivityTimer = setTimeout(() => {
         document.body.classList.add('controls-faded');
     }, CONSTANTS.AUTO_HIDE_MS);
+}
+
+function showToast(message) {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.add('visible');
+    if (state.toastTimer) clearTimeout(state.toastTimer);
+    state.toastTimer = setTimeout(() => toast.classList.remove('visible'), 2200);
 }
 
 function updateControlsVisibility(visible) {
@@ -771,9 +888,11 @@ function importCSV() {
                 const x = parseInt(parts[0].trim(), 10);
                 const y = parseInt(parts[1].trim(), 10);
                 if (isNaN(x) || isNaN(y)) continue;
-                if (x >= 0 && x < g.cellX && y >= 0 && y < g.cellY) g.cell[x][y] = 1;
+            if (x >= 0 && x < g.cellX && y >= 0 && y < g.cellY) g.cell[x][y] = 1;
             }
+            g.rebuildFrontier();
             g.render();
+            scheduleURLSync();
         };
         reader.readAsText(file);
     });
@@ -812,6 +931,8 @@ function handlePointerSet(e) {
     if (c.x < 0 || c.x >= state.game.cellX || c.y < 0 || c.y >= state.game.cellY) return;
     state.pointerDrawValue = state.game.cell[c.x][c.y] ? 0 : 1;
     state.game.cell[c.x][c.y] = state.pointerDrawValue;
+    state.game.addInfluence(c.x, c.y);
+    scheduleURLSync();
     state.game.render();
 }
 
@@ -819,6 +940,7 @@ function handlePointerSet(e) {
 // Event Handlers
 // ============================================
 document.addEventListener('DOMContentLoaded', () => {
+    if (state.embed) document.body.classList.add('embed-mode');
     // Get all UI elements
     const controls = {
         darkToggle: document.getElementById('darkToggle'),
@@ -874,6 +996,7 @@ document.addEventListener('DOMContentLoaded', () => {
     controls.darkToggle.addEventListener('change', (e) => {
         state.config.dark = e.target.checked;
         updateTheme();
+        scheduleURLSync();
     });
 
     
@@ -887,6 +1010,7 @@ document.addEventListener('DOMContentLoaded', () => {
             controls.customRuleLabel.style.display = (e.target.value === 'other' ? '' : 'none');
         }
         state.game?.render();
+        scheduleURLSync();
     });
 
     if (controls.customRuleInput) {
@@ -896,6 +1020,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Only apply if valid
             if (!validateRuleString(e.target.value)) {
                 state.game?.render();
+                scheduleURLSync();
             }
         });
         // Initial UI update
@@ -953,21 +1078,60 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!state.game) return;
         state.game.clear();
         state.game.render();
+        scheduleURLSync();
     });
 
     controls.stepBtn.addEventListener('click', () => {
         if (!state.game) return;
         state.game.nextGeneration();
         state.game.render();
+        scheduleURLSync();
     });
 
     controls.randomizeBtn.addEventListener('click', () => {
         if (!state.game) return;
         state.game.fillRandom(state.config.density);
         state.game.render();
+        scheduleURLSync();
     });
 
     controls.pauseToggle.addEventListener('click', togglePause);
+    const fileMenu = document.querySelector('.file-menu');
+    const fileMenuToggle = document.getElementById('fileMenuToggle');
+    fileMenuToggle?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = fileMenu.classList.toggle('open');
+        fileMenuToggle.setAttribute('aria-expanded', String(open));
+    });
+    document.addEventListener('click', (e) => {
+        if (!fileMenu?.contains(e.target)) {
+            fileMenu?.classList.remove('open');
+            fileMenuToggle?.setAttribute('aria-expanded', 'false');
+        }
+    });
+    fileMenu?.addEventListener('click', (e) => {
+        if (e.target.closest('button:not(#fileMenuToggle)')) {
+            fileMenu.classList.remove('open');
+            fileMenuToggle?.setAttribute('aria-expanded', 'false');
+        }
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            fileMenu?.classList.remove('open');
+            fileMenuToggle?.setAttribute('aria-expanded', 'false');
+        }
+    });
+    document.getElementById('shareBtn')?.addEventListener('click', async () => {
+        const url = shareURL();
+        history.replaceState(null, '', url);
+        try {
+            await navigator.clipboard.writeText(url);
+            document.getElementById('shareBtn').title = 'Share URL copied';
+            showToast('Share URL copied');
+        } catch (_) {
+            window.prompt('Copy this share URL:', url);
+        }
+    });
 
     // === Activity Fade ===
     CONSTANTS.ACTIVITY_EVENTS.forEach(evt => {
@@ -1070,6 +1234,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (c.x < 0 || c.x >= state.game.cellX || c.y < 0 || c.y >= state.game.cellY) return;
         if (state.game.cell[c.x][c.y] !== state.pointerDrawValue) {
             state.game.cell[c.x][c.y] = state.pointerDrawValue;
+            state.game.addInfluence(c.x, c.y);
+            scheduleURLSync();
             state.game.render();
         }
     }, { passive: false });
@@ -1151,6 +1317,8 @@ document.addEventListener('DOMContentLoaded', () => {
         torusToggle.checked = state.config.torus !== false;
         torusToggle.addEventListener('change', () => {
             state.config.torus = torusToggle.checked;
+            state.game?.rebuildFrontier();
+            scheduleURLSync();
             state.game?.render();
         });
     }
@@ -1178,6 +1346,7 @@ document.addEventListener('DOMContentLoaded', () => {
             inputEl.value = v;
             state.config[configKey] = v;
             updateBadges();
+            scheduleURLSync();
         });
         rangeEl.addEventListener('change', () => { if (onChange) onChange(); });
         inputEl.addEventListener('change', () => {
@@ -1186,6 +1355,7 @@ document.addEventListener('DOMContentLoaded', () => {
             rangeEl.value = v;
             state.config[configKey] = v;
             updateBadges();
+            scheduleURLSync();
             if (onChange) onChange();
         });
     }
