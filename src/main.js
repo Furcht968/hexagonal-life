@@ -316,6 +316,7 @@ function loadURLState() {
     }
     if (p.has('torus')) state.config.torus = p.get('torus') !== '0';
     state.embed = p.get('embed') === '1';
+    if (state.embed) state.paused = true;
     state.pendingCells = decodeCells(p.get('cells'), state.config.cellX, state.config.cellY);
 }
 
@@ -1045,6 +1046,7 @@ function pixelToCell(px, py) {
 }
 
 function handlePointerSet(e) {
+    if (state.embed) return;
     if (document.body.classList.contains('controls-visible')) return;
     if (!state.game) return;
     const rect = state.canvas.getBoundingClientRect();
@@ -1217,6 +1219,77 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     controls.pauseToggle.addEventListener('click', togglePause);
+
+    // === Embed overlay & pause toggle ===
+    const embedOverlay = document.getElementById('embedOverlay');
+    const embedPlayBtn = document.getElementById('embedPlayBtn');
+    const embedDock = document.getElementById('embedDock');
+    const embedPauseToggle = document.getElementById('embedPauseToggle');
+    const embedStepBtn = document.getElementById('embedStepBtn');
+    const embedOpenBtn = document.getElementById('embedOpenBtn');
+
+    if (state.embed && embedOverlay) {
+        embedOverlay.style.display = '';
+        embedOverlay.addEventListener('click', () => {
+            if (embedDock) embedDock.style.display = ''; // Reveal the dock
+            togglePause();                       // stop-paused → running
+            updateEmbedPauseToggle();
+            embedOverlay.style.display = 'none';
+        });
+    }
+
+    function updateEmbedPauseToggle() {
+        if (!embedPauseToggle) return;
+        if (state.paused) {
+            embedPauseToggle.innerHTML = '<i class="fa fa-play" aria-hidden="true"></i><span class="sr-only">Resume</span>';
+            embedPauseToggle.setAttribute('aria-pressed', 'false');
+            if (embedDock) embedDock.classList.add('visible');
+        } else {
+            embedPauseToggle.innerHTML = '<i class="fa fa-pause" aria-hidden="true"></i><span class="sr-only">Pause</span>';
+            embedPauseToggle.setAttribute('aria-pressed', 'true');
+            if (embedDock) embedDock.classList.remove('visible');
+        }
+    }
+
+    if (embedPauseToggle) {
+        embedPauseToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            togglePause();
+            updateEmbedPauseToggle();
+        });
+    }
+
+    if (embedStepBtn) {
+        embedStepBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!state.game) return;
+            state.game.nextGeneration();
+            state.game.render();
+            scheduleURLSync();
+        });
+    }
+
+    if (embedOpenBtn) {
+        embedOpenBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const url = new URL(shareURL());
+            url.searchParams.delete('embed'); // Remove embed parameter
+            window.open(url.toString(), '_blank');
+        });
+    }
+
+    // Show embed dock briefly on interaction anywhere in the page
+    function showEmbedPauseToggle() {
+        if (!embedDock || !state.embed) return;
+        embedDock.classList.add('visible');
+    }
+
+    // After user starts playback, show dock on pointer/mouse interaction
+    CONSTANTS.ACTIVITY_EVENTS.forEach(evt => {
+        document.addEventListener(evt, () => {
+            if (!state.paused && embedDock) embedDock.classList.add('visible');
+        }, { passive: true });
+    });
     const fileMenu = document.querySelector('.file-menu');
     const fileMenuToggle = document.getElementById('fileMenuToggle');
     fileMenuToggle?.addEventListener('click', (e) => {
@@ -1299,7 +1372,31 @@ document.addEventListener('DOMContentLoaded', () => {
     function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
     state.canvas.addEventListener('pointerdown', (e) => {
-        if (document.body.classList.contains('controls-visible')) return;
+        if (state.embed) {
+            // In embed mode, only allow middle-button pan and touch pinch-zoom/rotate.
+            // No cell drawing.
+            if (e.pointerType === 'mouse' && e.button === 1) {
+                state.canvas.setPointerCapture?.(e.pointerId);
+                state.gesture.isPanning = true;
+                state.gesture.panLast = { x: e.clientX, y: e.clientY };
+                state.canvas.style.cursor = 'grabbing';
+            }
+            if (e.pointerType === 'touch') {
+                state.gesture.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                if (state.gesture.pointers.size === 2) {
+                    const pts = Array.from(state.gesture.pointers.values());
+                    const startDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+                    const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+                    state.gesture.gestureStart = {
+                        startDist,
+                        startScale: state.view.scale,
+                        startMid: mid,
+                        startOffset: { x: state.view.offsetX, y: state.view.offsetY }
+                    };
+                }
+            }
+            return;
+        }
         state.canvas.setPointerCapture?.(e.pointerId);
 
         if (e.pointerType === 'mouse' && e.button === 1) {

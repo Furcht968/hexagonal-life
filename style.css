@@ -71,6 +71,81 @@ body.embed-mode .controls {
     display: none;
 }
 
+/* Embed overlay: full-screen click target to start playback */
+.embed-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.embed-play-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 80px;
+    height: 80px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.9);
+    color: #1a1a1a;
+    font-size: 32px;
+    cursor: pointer;
+    transition: transform 150ms ease, background-color 150ms ease;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.embed-overlay:hover .embed-play-btn {
+    transform: scale(1.08);
+    background: #ffffff;
+}
+
+.embed-play-btn:active {
+    transform: scale(0.96);
+}
+
+/* Embed dock: floats at bottom; shown only when running */
+.embed-dock {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 98;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: var(--bg-panel);
+    border: none;
+    border-radius: 9999px;
+    box-shadow: var(--shadow-dock);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    transition: opacity 300ms ease;
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Show on hover near the bottom area, or keep it visible briefly after interaction */
+body.embed-mode .embed-dock.visible,
+body.embed-mode:hover .embed-dock {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.dock-separator {
+    width: 1px;
+    height: 24px;
+    background-color: rgba(var(--color-primary-rgb), 0.15);
+    margin: 0 4px;
+}
+
 /* ==========================================================================
    Floating Dock (下部中央の操作バー)
    ========================================================================== */
@@ -698,6 +773,10 @@ body.resizing {
         display: none;
     }
     .floating-dock {
+        bottom: 16px;
+        padding: 6px 10px;
+    }
+    .embed-dock {
         bottom: 16px;
         padding: 6px 10px;
     }

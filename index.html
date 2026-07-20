@@ -300,6 +300,31 @@
     </div>
 
     <canvas class="canvas"></canvas>
+
+    <!-- Embed overlay: shown when ?embed=1, hidden on first play tap -->
+    <div id="embedOverlay" class="embed-overlay" style="display:none">
+        <button id="embedPlayBtn" class="embed-play-btn" title="Play">
+            <i class="fa fa-play" aria-hidden="true"></i>
+        </button>
+    </div>
+
+    <!-- Embed dock: shown when running in embed mode -->
+    <div id="embedDock" class="embed-dock" style="display:none">
+        <button id="embedPauseToggle" class="dock-btn" aria-pressed="false" title="Pause / Resume">
+            <i class="fa fa-pause" aria-hidden="true"></i>
+            <span class="sr-only">Pause</span>
+        </button>
+        <button id="embedStepBtn" class="dock-btn" title="Step one generation">
+            <i class="fa fa-step-forward" aria-hidden="true"></i>
+            <span class="sr-only">Step</span>
+        </button>
+        <div class="dock-separator"></div>
+        <button id="embedOpenBtn" class="dock-btn" title="Open in new tab">
+            <i class="fa fa-external-link-alt" aria-hidden="true"></i>
+            <span class="sr-only">Open in new tab</span>
+        </button>
+    </div>
+
     <script src="src/main.js"></script>
 </body>
 
